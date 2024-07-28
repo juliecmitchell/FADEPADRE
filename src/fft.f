@@ -1,0 +1,2177 @@
+C   FFTSUBS_NOBIX   NAME=CMPLFT
+C***********************************************************************
+      INTEGER FUNCTION CMPLFT(X,Y,N,IDIM,FORWARD)
+C-----------------------------------------------------------------------
+C     COMPLEX FOURIER TRANSFORM OF 3-DIMENSIONAL ARRAY
+C     UPDATED A.D. MCLACHLAN 27 AUG 1987
+C     UPDATED MIKE PIQUE 3 NOV 1996 - Return error value instead of doing I/O
+C        ERROR 1: INVALID NUMBER OF POINTS
+C        ERROR 2: ERROR IN DIMENSIONS OF ARRAYS
+C-----------------------------------------------------------------------
+      INTEGER N
+      INTEGER FORWARD
+      REAL*4 X(*), Y(*)
+      DIMENSION IDIM(10)
+C-----  External function declarations
+      INTEGER GRIDIM, SRFP, MDFTKD
+C----------------------
+      INTEGER NDIM(5)
+      EQUIVALENCE (LSEPU,NDIM(1)),(LSEPV,NDIM(2)),(LSEPW,NDIM(3))
+      EQUIVALENCE (LGLIMV,NDIM(4)),(LGLIMW,NDIM(5))
+C-----
+      PARAMETER(MFACTR=32,MFACT1=MFACTR+1)
+      PARAMETER(M2GRP=8,MPORD=8,MPMAX=19)
+      LOGICAL ERROR
+      INTEGER ERRCOD
+      INTEGER NPMAX, NPSYM, N2GRP
+      INTEGER NFACTR(MFACT1), NSYM(MFACT1), NUNSYM(MFACT1)
+C      INTEGER NPRLST(MPORD)/2,3,5,7,11,13,17,19/
+      INTEGER NPRLST(MPORD)
+      DATA NPRLST/2,3,5,7,11,13,17,19/
+C-----------------------------------------------------------------------
+C  IN/OUT  --  X(*)           REAL*4 PART OF DATA/TRANSFORM
+C  IN/OUT  --  Y(*)           IMAGINARY PART OF DATA/TRANSFORM
+C  INPUT   --  N              LENGTH OF TRANSFORM AXIS
+C  INPUT   --  IDIM(10)       DIMENSIONING CONSTANTS FOR 1,2 OR 3-D ARRAY
+C-----------------------------------------------------------------------
+C  CALLS   --  GRIDIM         CALCULATE DIMENSIONING CONSTANTS
+C  CALLS   --  SRFP           FACTORISATION OF N
+C  CALLS   --  MDFTKD         FFT DRIVER
+C  CALLS   --  DIPRP          REORDERING OF OUTPUT
+C-----------------------------------------------------------------------
+C  NOTE  --  INDEXING -- THE ARRANGEMENT OF THE MULTI-DIMENSIONAL DATA IS
+C  NOTE  --  SPECIFIED BY THE INTEGER ARRAY D, THE VALUES OF WHICH ARE USED AS
+C  NOTE  --  CONTROL PARAMETERS IN DO LOOPS.  WHEN IT IS DESIRED TO COVER ALL
+C  NOTE  --  ELEMENTS OF THE DATA FOR WHICH THE SUBSCRIPT BEING TRANSFORMED HAS
+C  NOTE  --  THE VALUE I0, THE FOLLOWING IS USED.
+C  NOTE  --
+C  NOTE  --            I1 = (I0 - 1)*LSEPU + 1
+C  NOTE  --            LINDU=I1-LSEPV-LSEPW
+C  NOTE  --            DO 100 LDXV=LSEPV,LGLIMV,LSEPV
+C  NOTE  --            LINDV=LINDU+LDXV
+C  NOTE  --            DO 100 LDXW=LSEPW,LGLIMW,LSEPW
+C  NOTE  --            I=LINDV+LDXW
+C  NOTE  --            . . .
+C  NOTE  --            . . .
+C  NOTE  --        100 CONTINUE
+C  NOTE  --  HERE LSEPU=D(1) IS SEPARATION BETWEEN ADJACENT ELEMENTS OF X
+C  NOTE  --  (OR OF Y) ALONG THE INDEX IU WHICH IS BEING TRANSFORMED.
+C  NOTE  --  LSEPV=D(2) AND LSEPW=D(3) ARE SEPARATION OF ADJACENT ELEMENTS
+C  NOTE  --  ALONG THE SECOND AND THIRD DIRECTIONS INDEXED BY IV,IW.
+C  NOTE  --  LGLIMV=D(4)=LSEPV*LGRIDV AND LGLIMW=D(5)=LSEPW*LGRIDW WITH
+C  NOTE  --  LGRIDV, LGRIDW BEING THE NUMBER OF GRID POINTS IN THE X (OR Y)
+C  NOTE  --  ARRAYS ALONG THE IV AND IW AXES
+C  NOTE  --  WITH THIS INDEXING IT IS POSSIBLE TO USE A NUMBER OF ARRANGEMENTS
+C  NOTE  --  OF THE DATA, INCLUDING NORMAL FORTRAN COMPLEX NUMBERS
+C  NOTE  --  (LSEPU=D(1) = 2)
+C  NOTE  --  THE SUBROUTINE GRIDIM CALCULATES THE ELEMENTS OF D ARRAY FROM THE
+C  NOTE  --  IDIM ARRAY, WHERE
+C  NOTE  --    IDIM(1)=IU               AXIS ALONG WHICH TRANSFORM IS DONE
+C  NOTE  --    IDIM(2)=IV               2ND AXIS NORMAL TO IU
+C  NOTE  --    IDIM(3)=IW               3RD AXIS NORMAL TO IU AND IV
+C  NOTE  --    IDIM(4)=NDIMX            ARRAY DIMENSION OF X(OR Y) ALONG A AXIS
+C  NOTE  --    IDIM(5)=NDIMY            ARRAY DIMENSION ALONG B AXIS
+C  NOTE  --    IDIM(6)=NDIMZ            ARRAY DIMENSION ALONG C AXIS
+C  NOTE  --    IDIM(7)=NGRIDX           NUMBER OF GRID POINTS USED ALONG A AXIS
+C  NOTE  --    IDIM(8)=NGRIDY           NUMBER OF GRID POINTS USED ALONG B AXIS
+C  NOTE  --    IDIM(9)=NGRIDZ           NUMBER OF GRID POINTS USED ALONG C AXIS
+C  NOTE  --    IDIM(10)=ICMPLX          VALUE 1 FOR SEPARATE X,Y ARRAYS,2 FOR
+C  NOTE  --                             INTERLEAVED ARRAYS(X,I*Y)
+C  NOTE  --  NOTE THAT IU,IV,IW MUST BE A PERMUTATION OF 1,2,3 AND EACH
+C  NOTE  --  NGRID.LE.NDIM.
+C  NOTE  --  ALSO NGRID FOR AXIS IU IS SAME AS N, LENGTH OF TRANSFORM.
+C  NOTE  --  THIS ALLOWS TRANSFORM TO BE DONE FOR ARRAYS EMBEDDED IN PART OF A
+C  NOTE  --  LARGER ARRAY AND CHOICE OF AXES IN ANY ORDER
+C-------------------------------------------------------------------------------
+C  NOTE  --     NEW CALLS AND INTEGER VARIABLES
+C  NOTE  --     TRANSFORMS ONE DIMENSION OF MULTI-DIMENSIONAL DATA
+C  NOTE  --     MODIFIED BY L. F. TEN EYCK FROM A ONE-DIMENSIONAL VERSION WRITTEN
+C  NOTE  --     BY G. T. SANDE, 1969.  DIMENSIONING CHANGED BY A.D.MCLACHLAN, 1981.
+C  NOTE  --
+C  NOTE  --     THIS PROGRAM CALCULATES THE TRANSFORM
+C  NOTE  --               (X(T) + I*Y(T))*(COS(2*PI*T/N) - I*SIN(2*PI*T/N))
+C  NOTE  --
+C-----
+C  NOTE  --     NPMAX IS THE LARGEST PRIME FACTOR THAT WILL BE TOLERATED BY THIS
+C  NOTE  --     PROGRAM.
+C  NOTE  --     NPMAX IS THE NPORD'TH PRIME NUMBER IN NPRLST LIST
+C  NOTE  --     N2GRP IS THE LARGEST POWER OF TWO THAT IS TREATED AS A SPECIAL
+C  NOTE  --     CASE.
+C  NOTE  --     NFACTR(MFACT1) ALLOWS UP TO MFACTR FACTORS FOR THE ARRAY
+C  NOTE  --     DIMENSION N
+C-----------------------------------------------------------------------------
+C-----------------------------------------------------------------------------
+      NPMAX = MPMAX
+      NPORD=MPORD
+      N2GRP= M2GRP
+      ERROR=.FALSE.
+      IF (N .LE. 1) GO TO 100
+C   --SET GRID DIMENSIONS
+      ERRCOD = GRIDIM(N,IDIM,ERROR,LSEPU,LSEPV,LSEPW,
+     1    LGLIMV,LGLIMW)
+      IF(ERROR.OR.ERRCOD.NE.0) THEN
+C         --GRID DIMENSIONS IN ERROR
+C           WRITE(NWRITE,21) N, IDIM
+C  21       FORMAT(1X,'**CMPLFT** ERROR IN DIMENSIONS OF ARRAYS N=',I5,
+C    1      /1X,'           IDIM= ',3I5,1X,3I5,1X,3I5,1X,I5)
+            CMPLFT = ERRCOD
+            RETURN
+	    ENDIF
+C   --FACTORISE N, COLLECTING FACTORS IN PAIRS
+      ERRCOD=SRFP(N,NPMAX,NPORD,N2GRP,NFACTR,NSYM,NPSYM,
+     1          NUNSYM,NPRLST)
+      IF (ERRCOD.NE.0) THEN
+C        --FACTORS OF "N" IN ERROR
+         CMPLFT = ERRCOD
+C        WRITE (NWRITE, 20) N
+C  20    FORMAT (1X,'**CMPLFT** ERROR: INVALID NUMBER OF POINTS N =', I10)
+         RETURN
+      ENDIF
+C   --TRANSFORMS BY THE VARIOUS FACTORS IN TURN
+      IF(FORWARD .GT. 0) THEN
+      ERRCOD = MDFTKD(N,NFACTR,NDIM,X,Y)
+      ELSE
+      ERRCOD = MDFTKD(N,NFACTR,NDIM,Y,X)
+      ENDIF
+      IF(ERRCOD .NE. 0) THEN
+	 CMPLFT = ERRCOD
+	 RETURN
+	 ENDIF
+C   --REODERING OF PERMUTED FOURIER COEFFICIENTS
+      CALL DIPRP(N,NSYM,NPSYM,NUNSYM,NDIM,X,Y)
+  100 CONTINUE
+      CMPLFT = 0
+      RETURN
+C----------------------------
+      END
+C   FFTSUBS_NOBIX   NAME=DIPRP
+C********************************************************************
+      SUBROUTINE DIPRP(NPTS,NSYM,NPSYM,NUNSYM,NDIM,X,Y)
+C--------------------------------------------------------------------
+C     DOUBLE IN PLACE REORDERING PROGRAMME
+C     LAST UPDATED A.D. MCLACHLAN 26 AUG 1987.
+C--------------------------------------------------------------------
+      PARAMETER(MFCMAX=32,MFCMX1=MFCMAX+1)
+      INTEGER NPTS,NPSYM
+      REAL*4 X(*), Y(*)
+      INTEGER NSYM(MFCMX1), NUNSYM(MFCMX1),NDIM(5)
+C-------------------------------
+      REAL*4 T
+      LOGICAL ONEMOD
+      INTEGER MODULO (MFCMX1)
+      INTEGER NDK,JJ,KK,NLK,MODS,MULT,NFCMAX,NPNSYM,NTEST
+      INTEGER DELTA, P, P1, P5
+      INTEGER LSEPU,LSEPV,LSEPW,LGLIMV,LGLIMW
+      INTEGER LINDU,LINDV
+      INTEGER ISTEP(MFCMX1),IHIGH(MFCMX1)
+      INTEGER ILOOP(MFCMX1),ILOW(MFCMX1)
+C--------------------------------------------------------------------
+C  INPUT   --  NPTS           LENGTH OF TRANSFORM
+C  INPUT   --  NSYM(MFCMX1)   LIST OF PAIRED FACTORS
+C  INPUT   --  NPSYM          PRODUCT OF PAIRED FACTORS ONCE EACH
+C  INPUT   --  NUNSYM(MFCMX1) LIST OF SINGLE FACTORS (GOING UP)
+C  INPUT   --  NDIM(5)        DIMENSIONING CONSTANTS
+C  IN/OUT  --  X(*)           REAL*4 PART OF DATA
+C  IN/OUT  --  Y(*)           IMAGINARY PART OF DATA
+C--------------------------------------------------------------------
+C  CALLS   --  ***
+C--------------------------------------------------------------------
+C  NOTE  --     DIMENSIONS REVISED A.D.MCLACHLAN AUGUST 1981
+C  NOTE  --     NESTED LOOPS REVISED A.D. MCLACHLAN DEC 1984
+C--------------------------------------------------------------------
+C  NOTE  --     NSYM(J) LISTS PAIRED FACTORS TWICE OVER:
+C  NOTE  --     (1) NP FACTORS DESCENDING
+C  NOTE  --     (2) MIDDLE TERM NPTS/(NPSYM**2) IF NQ.NE.0
+C  NOTE  --     (3) NP FACTORS ASCENDING
+C  NOTE  --     NUNSYM(J) LISTS SINGLE FACTORS ASCENDING
+C  NOTE  --     EXCEPT IF ONLY ONE EXISTS
+C  NOTE  --     NPSYM IS PRODUCT OF PAIRED FACTORS ONCE EACH
+C--------------------------------------------------------
+C   --UP TO MFCMAX FACTORS ALLOWED
+      NFCMAX=MFCMAX
+      NFCMX1=NFCMAX+1
+      LSEPU=NDIM(1)
+      LSEPV=NDIM(2)
+      LSEPW=NDIM(3)
+      LGLIMV=NDIM(4)
+      LGLIMW=NDIM(5)
+C   --DEAL WITH ALL REPEATED FACTORS (IF ANY)
+C   --THERE ARE NDEEP OF THEM
+C   --FIND NDEEP
+      DO 100 J=1,NFCMX1
+      IF(NSYM(J).EQ.0) GO TO 110
+  100 CONTINUE
+      J=NFCMX1
+  110 CONTINUE
+      IF(J.EQ.1) GO TO 500
+      NDEEP=J-1
+C   --SET LIMITS FOR NESTED LOOPS
+C   --IN REVERSE ORDER
+      N=NPTS
+      DO 200 J=1,NDEEP
+      JJ=NDEEP+1-J
+      IHIGH(JJ)=N
+      N=N/NSYM(J)
+      ISTEP(JJ)=N
+  200 CONTINUE
+C-----
+      JJ=0
+C%%   WRITE(NWRITE,*)(NSYM(J),J=1,10)
+C%%   WRITE(NWRITE,*)(NUNSYM(J),J=1,10)
+C%%   WRITE(NWRITE,*) NPTS,NPSYM,NDIM
+C%%   WRITE(NWRITE,*) IHIGH
+C%%   WRITE(NWRITE,*) ISTEP
+C%%   WRITE(NWRITE,*) NDEEP
+C---------------------------------------------------
+C   --NESTED LOOPS DONE AS A STACK WITH NDEEP LEVELS
+C   --START
+      ILOW(1)=1
+      ISTEP(1)=1
+      LEVEL=1
+C   --SET LOOP INDEX ON ENTRY BUT DO NOT ADVANCE
+  300 CONTINUE
+      ILOOP(LEVEL)=ILOW(LEVEL)
+      GO TO 315
+C   --ADVANCE INDEX
+  310 CONTINUE
+      ILOOP(LEVEL)=ILOOP(LEVEL)+ISTEP(LEVEL)
+  315 CONTINUE
+C   --TEST FOR LOOP FINISHED
+      IF(ILOOP(LEVEL).GT.IHIGH(LEVEL)) GO TO 410
+C   --DEEPEN
+        IF(LEVEL.LT.NDEEP) THEN
+          LEVEL=LEVEL+1
+C       --SET LOWER LIMIT FOR CURRENT LEVEL
+          ILOW(LEVEL)=ILOOP(LEVEL-1)
+          GO TO 300
+        END IF
+C   --INNERMOST OPERATION AT DEEPEST LEVEL
+      N=ILOOP(NDEEP)
+      JJ=JJ+1
+C%%   WRITE(NWRITE,*)(ILOOP(J),J=1,NDEEP),JJ
+      IF (JJ.GE.N) GO TO 400
+      DELTA = (N-JJ)*LSEPU
+      P1 = (JJ-1)*LSEPU + 1
+      LINDU=P1-LSEPV-LSEPW
+      DO 350 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 350 LDXW=LSEPW,LGLIMW,LSEPW
+      P=LINDV+LDXW
+      P5 = P + DELTA
+      T = X(P)
+      X(P) = X(P5)
+      X(P5) = T
+      T = Y(P)
+      Y(P) = Y(P5)
+      Y(P5) = T
+  350 CONTINUE
+  400 CONTINUE
+C   --LOOP REPEAT GO BACK
+      GO TO 310
+C   --LOOP FINISHED
+  410 CONTINUE
+C   --SET NEXT LEVEL UP
+      LEVEL=LEVEL-1
+C   --TEST FOR OUTERMOST FINISH
+      IF(LEVEL.EQ.0) GO TO 420
+C   --CONTINUE LOOPING ON CURRENT LEVEL
+      GO TO 310
+  420 CONTINUE
+C---------------------------------------------
+  500 CONTINUE
+      IF (NUNSYM(1).EQ.0) GO TO 1900
+C   --DEAL WITH SINGLE FACTORS
+C   --NPNSYM IS PRODUCT OF SINGLE FACTORS
+C   --USE IHIGH(K) TO STORE MODULI
+      NPNSYM=NPTS/(NPSYM**2)
+      MULT=NPNSYM/NUNSYM(1)
+      NTEST=(NUNSYM(1)*NUNSYM(2)-1)*MULT*NPSYM
+      NLK=MULT
+      NDK=MULT
+      DO 600 K=2,NFCMAX
+      IF (NUNSYM(K).EQ.0) GO TO 700
+      NLK=NLK*NUNSYM(K-1)
+      NDK=NDK/NUNSYM(K)
+      IHIGH(K)=(NLK-NDK)*NPSYM
+      MODS=K
+  600 CONTINUE
+  700 CONTINUE
+      ONEMOD=MODS.LT.3
+      IF (ONEMOD) GO TO 900
+      DO 800 J=3,MODS
+      JJ=MODS+3-J
+      MODULO(JJ)=IHIGH(J)
+  800 CONTINUE
+  900 CONTINUE
+      MODULO(2)=IHIGH(2)
+      JL=(NPNSYM-3)*NPSYM
+      MS=NPNSYM*NPSYM
+C
+      DO 1800 J=NPSYM,JL,NPSYM
+      K=J
+C
+ 1000 CONTINUE
+      K=K*MULT
+      IF (ONEMOD) GO TO 1200
+C   --TAKE REMAINDERS OF K IN TURN
+      DO 1100 I=3,MODS
+      K=K-(K/MODULO(I))*MODULO(I)
+ 1100 CONTINUE
+ 1200 CONTINUE
+      IF (K.GE.NTEST) GO TO 1300
+      K=K-(K/MODULO(2))*MODULO(2)
+      GO TO 1400
+ 1300 CONTINUE
+      K=K-(K/MODULO(2))*MODULO(2)+MODULO(2)
+ 1400 CONTINUE
+      IF (K.LT.J) GO TO 1000
+C
+      IF (K.EQ.J) GO TO 1700
+      DELTA = (K-J)*LSEPU
+      DO 1600 L=1,NPSYM
+      DO 1500 M=L,NPTS,MS
+      P1 = (M+J-1)*LSEPU + 1
+      LINDU=P1-LSEPV-LSEPW
+      DO 1500 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 1500 LDXW=LSEPW,LGLIMW,LSEPW
+      JJ=LINDV+LDXW
+      KK = JJ + DELTA
+      T=X(JJ)
+      X(JJ)=X(KK)
+      X(KK)=T
+      T=Y(JJ)
+      Y(JJ)=Y(KK)
+      Y(KK)=T
+ 1500 CONTINUE
+ 1600 CONTINUE
+ 1700 CONTINUE
+ 1800 CONTINUE
+C
+ 1900 CONTINUE
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=GRIDIM
+C**********************************************************************
+      INTEGER FUNCTION GRIDIM(N,IDIM,ERROR,LSEPU,LSEPV,
+     1   LSEPW,LGLIMV,LGLIMW)
+C----------------------------------------------------------------------
+C  CALCULATE ARRAY DIMENSIONING CONSTANTS
+C  A.D. MCLACHLAN 1981. LAST UPDATED 26 AUG 1987.
+C     UPDATED MIKE PIQUE 3 NOV 1996 - Return error value instead of doing I/O
+C        ERROR 101: GRID SIZE ERROR
+C        ERROR 102: ERROR IN DIMENSIONS OF ARRAYS
+C        ERROR 103: FOURIER RANGE TOO BIG FOR ARRAY DIMENSION
+C----------------------------------------------------------------------
+      DIMENSION IDIM(10),NDIM(3),NGRID(3),IUVW(3),LSEP(3)
+      EQUIVALENCE(IU,IUVW(1))
+      EQUIVALENCE(IV,IUVW(2))
+      EQUIVALENCE(IW,IUVW(3))
+      LOGICAL ERROR
+C-----------------------------------------------------------------------
+C  INPUT   --  N              LENGTH OF TRANSFORM AXIS
+C  INPUT   --  IDIM(10)       DIMENSIONING CONSTANTS FOR 1,2 OR 3-D ARRAY
+C  OUTPUT  --  ERROR      .L. .TRUE. IF ERROR IS DETECTED
+C  OUTPUT  --  LSEPU          SEPARATION OF ELEMENTS ALONG IU AXIS
+C  OUTPUT  --  LSEPV          SEPARATION OF ELEMENTS ALONG IV AXIS
+C  OUTPUT  --  LSEPW          SEPARATION OF ELEMENTS ALONG IW AXIS
+C  OUTPUT  --  LGLIMV         UPPER LIMIT FOR LINDV LOOP
+C  OUTPUT  --  LGLIMW         UPPER LIMIT FOR LINDW LOOP
+C-----------------------------------------------------------------------
+C  CALLS   --  ***
+C-----------------------------------------------------------------------
+C  NOTE  --  INDEXING -- THE ARRANGEMENT OF THE MULTI-DIMENSIONAL DATA IS
+C  NOTE  --  SPECIFIED BY THE INTEGER ARRAY D, THE VALUES OF WHICH ARE USED AS
+C  NOTE  --  CONTROL PARAMETERS IN DO LOOPS.  WHEN IT IS DESIRED TO COVER ALL
+C  NOTE  --  ELEMENTS OF THE DATA FOR WHICH THE SUBSCRIPT BEING TRANSFORMED HAS
+C  NOTE  --  THE VALUE I0, THE FOLLOWING IS USED.
+C  NOTE  --
+C  NOTE  --            I1 = (I0 - 1)*LSEPU + 1
+C  NOTE  --            LINDU=I1-LSEPV-LSEPW
+C  NOTE  --            DO 100 LDXV=LSEPV,LGLIMV,LSEPV
+C  NOTE  --            LINDV=LINDU+LDXV
+C  NOTE  --            DO 100 LDXW=LSEPW,LGLIMW,LSEPW
+C  NOTE  --            I=LINDV+LDXW
+C  NOTE  --            . . .
+C  NOTE  --            . . .
+C  NOTE  --        100 CONTINUE
+C  NOTE  --  HERE LSEPU=D(1) IS SEPARATION BETWEEN ADJACENT ELEMENTS OF X
+C  NOTE  --  (OR OF Y) ALONG THE INDEX IU WHICH IS BEING TRANSFORMED.
+C  NOTE  --  LSEPV=D(2) AND LSEPW=D(3) ARE SEPARATION OF ADJACENT ELEMENTS
+C  NOTE  --  ALONG THE SECOND AND THIRD DIRECTIONS INDEXED BY IV,IW.
+C  NOTE  --  LGLIMV=D(4)=LSEPV*LGRIDV AND LGLIMW=D(5)=LSEPW*LGRIDW WITH
+C  NOTE  --  LGRIDV, LGRIDW BEING THE NUMBER OF GRID POINTS IN THE X (OR Y)
+C  NOTE  --  ARRAYS ALONG THE IV AND IW AXES
+C  NOTE  --  WITH THIS INDEXING IT IS POSSIBLE TO USE A NUMBER OF ARRANGEMENTS
+C  NOTE  --  OF THE DATA, INCLUDING NORMAL FORTRAN COMPLEX NUMBERS
+C  NOTE  --  (LSEPU=D(1) = 2)
+C  NOTE  --  THE SUBROUTINE GRIDIM CALCULATES THE ELEMENTS OF D ARRAY FROM THE
+C  NOTE  --  IDIM ARRAY, WHERE
+C  NOTE  --    IDIM(1)=IU               AXIS ALONG WHICH TRANSFORM IS DONE
+C  NOTE  --    IDIM(2)=IV               2ND AXIS NORMAL TO IU
+C  NOTE  --    IDIM(3)=IW               3RD AXIS NORMAL TO IU AND IV
+C  NOTE  --    IDIM(4)=NDIMX            ARRAY DIMENSION OF X(OR Y) ALONG A AXIS
+C  NOTE  --    IDIM(5)=NDIMY            ARRAY DIMENSION ALONG B AXIS
+C  NOTE  --    IDIM(6)=NDIMZ            ARRAY DIMENSION ALONG C AXIS
+C  NOTE  --    IDIM(7)=NGRIDX           NUMBER OF GRID POINTS USED ALONG A AXIS
+C  NOTE  --    IDIM(8)=NGRIDY           NUMBER OF GRID POINTS USED ALONG B AXIS
+C  NOTE  --    IDIM(9)=NGRIDZ           NUMBER OF GRID POINTS USED ALONG C AXIS
+C  NOTE  --    IDIM(10)=ICMPLX          VALUE 1 FOR SEPARATE X,Y ARRAYS,2 FOR
+C  NOTE  --                             INTERLEAVED ARRAYS(X,I*Y)
+C  NOTE  --  NOTE THAT IU,IV,IW MUST BE A PERMUTATION OF 1,2,3 AND EACH
+C  NOTE  --  NGRID.LE.NDIM.
+C  NOTE  --  ALSO NGRID FOR AXIS IU IS SAME AS N, LENGTH OF TRANSFORM.
+C  NOTE  --  THIS ALLOWS TRANSFORM TO BE DONE FOR ARRAYS EMBEDDED IN PART OF A
+C  NOTE  --  LARGER ARRAY AND CHOICE OF AXES IN ANY ORDER
+C-------------------------------------------------------------------------------
+C--------------------------------
+      ERROR=.FALSE.
+      DO 100 I=1,3
+      NDIM(I)=IDIM(I+3)
+      NGRID(I)=IDIM(I+6)
+      IUVW(I)=IDIM(I)
+  100 CONTINUE
+      ICMPLX=IDIM(10)
+      DO 105 I=1,3
+      IF(NGRID(I).GT.NDIM(I)) GO TO 300
+  105 CONTINUE
+      DO 110 I=1,3
+      IF((IUVW(I).LT.1).OR.(IUVW(I).GT.3)) GO TO 400
+  110 CONTINUE
+      IF((IU.EQ.IV).OR.(IV.EQ.IW).OR.(IW.EQ.IU)) GO TO 400
+      LSEP(1)=ICMPLX
+      LSEP(2)=ICMPLX*NDIM(1)
+      LSEP(3)=ICMPLX*NDIM(1)*NDIM(2)
+      LGRIDU=NGRID(IU)
+      LGRIDV=NGRID(IV)
+      LGRIDW=NGRID(IW)
+      IF(LGRIDU.LT.N) GO TO 500
+      LSEPU=LSEP(IU)
+      LSEPV=LSEP(IV)
+      LSEPW=LSEP(IW)
+      LGLIMV=LSEPV*LGRIDV
+      LGLIMW=LSEPW*LGRIDW
+      GRIDIM = 0
+      RETURN
+  300 CONTINUE
+C     GRID SIZE ERROR
+      GRIDIM = 101
+C     WRITE(NWRITE,20) NGRID,NDIM
+C  20 FORMAT(1X,' GRIDIM ERROR *** NGRID ',3I5,' GT NDIM ',3I5)
+      ERROR=.TRUE.
+      GO TO 600
+  400 CONTINUE
+C     AXES ERROR
+C     WRITE(NWRITE,21) IUVW
+C  21 FORMAT(1X,' GRIDIM ERROR *** INVALID AXES ',3I5)
+      GRIDIM = 102
+      ERROR=.TRUE.
+      GO TO 600
+  500 CONTINUE
+C     FOURIER RANGE TOO BIG FOR ARRAY DIMENSION
+C     WRITE(NWRITE,22) N,LGRIDU
+C  22 FORMAT(1X,' GRIDIM ERROR *** N.GT.LGRIDU ',2I5)
+      GRIDIM = 103
+      ERROR= .TRUE.
+  600 CONTINUE
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=HERMFT
+C*****************************************************************************
+      INTEGER FUNCTION HERMFT (X, Y, N, IDIM,FORWARD)
+C-----------------------------------------------------------------------------
+C     HERMITIAN SYMMETRIC FOURIER TRANSFORM
+C     UPDATED A.D. MCLACHLAN 26 AUG 1987
+C     UPDATED MIKE PIQUE 3 NOV 1996 - Return error value instead of doing I/O
+C        ERROR CODES : ALL FROM CALLED FUNCTIONS
+C-----------------------------------------------------------------------------
+      REAL*4 X(*), Y(*)
+      INTEGER N
+      INTEGER FORWARD
+      INTEGER IDIM(10)
+C-----  External function declarations
+      INTEGER GRIDIM, CMPLFT
+C-----
+      INTEGER DIM(5)
+      LOGICAL ERROR
+      INTEGER ERRCOD
+      REAL*4 A, B, C, D, E, F,  CO, SI
+      INTEGER LSEPU,LSEPV,LSEPW,LGLIMV,LGLIMW,L
+      EQUIVALENCE (LSEPU,DIM(1)),(LSEPV,DIM(2)),(LSEPW,DIM(3))
+      EQUIVALENCE (LGLIMV,DIM(4)),(LGLIMW,DIM(5))
+      INTEGER I, J, K, N OVER 2, I0, LINDU,LINDV,LDXV,LDXW
+      INTEGER K1
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1,DBCC
+      DOUBLE PRECISION DBANGL,DBTWON
+      DATA DBPI2/6.28318530717958623D0/
+C--
+C%%   DBPI2=8.0D0*DATAN2(1.0D0,1.0D0)
+C-----------------------------------------------------------------------
+C  IN/OUT  --  X(*)           REAL*4 PART OF DATA/TRANSFORM
+C  IN/OUT  --  Y(*)           IMAGINARY PART OF DATA/TRANSFORM
+C  INPUT   --  N              LENGTH OF TRANSFORM AXIS
+C  INPUT   --  IDIM(10)       DIMENSIONING CONSTANTS FOR 1,2 OR 3-D ARRAY
+C-----------------------------------------------------------------------
+C  CALLS   --  GRIDIM         CALCULATE DIMENSIONING CONSTANTS
+C  CALLS   --  CMPLFT         COMPLEX FOURIER TRANSFORM
+C-----------------------------------------------------------------------
+C  NOTE  --  INDEXING REVISED AND SIN COS RECALCULATED A.D.MCLACHLAN AUGUST 1981
+C-----------------------------------------------------------------------------
+C  NOTE  --  INDEXING -- THE ARRANGEMENT OF THE MULTI-DIMENSIONAL DATA IS
+C  NOTE  --  SPECIFIED BY THE INTEGER ARRAY D, THE VALUES OF WHICH ARE USED AS
+C  NOTE  --  CONTROL PARAMETERS IN DO LOOPS.  WHEN IT IS DESIRED TO COVER ALL
+C  NOTE  --  ELEMENTS OF THE DATA FOR WHICH THE SUBSCRIPT BEING TRANSFORMED HAS
+C  NOTE  --  THE VALUE I0, THE FOLLOWING IS USED.
+C  NOTE  --
+C  NOTE  --            I1 = (I0 - 1)*LSEPU + 1
+C  NOTE  --            LINDU=I1-LSEPV-LSEPW
+C  NOTE  --            DO 100 LDXV=LSEPV,LGLIMV,LSEPV
+C  NOTE  --            LINDV=LINDU+LDXV
+C  NOTE  --            DO 100 LDXW=LSEPW,LGLIMW,LSEPW
+C  NOTE  --            I=LINDV+LDXW
+C  NOTE  --            . . .
+C  NOTE  --            . . .
+C  NOTE  --        100 CONTINUE
+C  NOTE  --  HERE LSEPU=D(1) IS SEPARATION BETWEEN ADJACENT ELEMENTS OF X
+C  NOTE  --  (OR OF Y) ALONG THE INDEX IU WHICH IS BEING TRANSFORMED.
+C  NOTE  --  LSEPV=D(2) AND LSEPW=D(3) ARE SEPARATION OF ADJACENT ELEMENTS
+C  NOTE  --  ALONG THE SECOND AND THIRD DIRECTIONS INDEXED BY IV,IW.
+C  NOTE  --  LGLIMV=D(4)=LSEPV*LGRIDV AND LGLIMW=D(5)=LSEPW*LGRIDW WITH
+C  NOTE  --  LGRIDV, LGRIDW BEING THE NUMBER OF GRID POINTS IN THE X (OR Y)
+C  NOTE  --  ARRAYS ALONG THE IV AND IW AXES
+C  NOTE  --  WITH THIS INDEXING IT IS POSSIBLE TO USE A NUMBER OF ARRANGEMENTS
+C  NOTE  --  OF THE DATA, INCLUDING NORMAL FORTRAN COMPLEX NUMBERS
+C  NOTE  --  (LSEPU=D(1) = 2)
+C  NOTE  --  THE SUBROUTINE GRIDIM CALCULATES THE ELEMENTS OF D ARRAY FROM THE
+C  NOTE  --  IDIM ARRAY, WHERE
+C  NOTE  --    IDIM(1)=IU               AXIS ALONG WHICH TRANSFORM IS DONE
+C  NOTE  --    IDIM(2)=IV               2ND AXIS NORMAL TO IU
+C  NOTE  --    IDIM(3)=IW               3RD AXIS NORMAL TO IU AND IV
+C  NOTE  --    IDIM(4)=NDIMX            ARRAY DIMENSION OF X(OR Y) ALONG A AXIS
+C  NOTE  --    IDIM(5)=NDIMY            ARRAY DIMENSION ALONG B AXIS
+C  NOTE  --    IDIM(6)=NDIMZ            ARRAY DIMENSION ALONG C AXIS
+C  NOTE  --    IDIM(7)=NGRIDX           NUMBER OF GRID POINTS USED ALONG A AXIS
+C  NOTE  --    IDIM(8)=NGRIDY           NUMBER OF GRID POINTS USED ALONG B AXIS
+C  NOTE  --    IDIM(9)=NGRIDZ           NUMBER OF GRID POINTS USED ALONG C AXIS
+C  NOTE  --    IDIM(10)=ICMPLX          VALUE 1 FOR SEPARATE X,Y ARRAYS,2 FOR
+C  NOTE  --                             INTERLEAVED ARRAYS(X,I*Y)
+C  NOTE  --  NOTE THAT IU,IV,IW MUST BE A PERMUTATION OF 1,2,3 AND EACH
+C  NOTE  --  NGRID.LE.NDIM.
+C  NOTE  --  ALSO NGRID FOR AXIS IU IS SAME AS N, LENGTH OF TRANSFORM.
+C  NOTE  --  THIS ALLOWS TRANSFORM TO BE DONE FOR ARRAYS EMBEDDED IN PART OF A
+C  NOTE  --  LARGER ARRAY AND CHOICE OF AXES IN ANY ORDER
+C-------------------------------------------------------------------------------
+C  NOTE  --  GIVEN THE UNIQUE TERMS OF A HERMITIAN SYMMETRIC SEQUENCE OF LENGTH
+C  NOTE  --  2N THIS SUBROUTINE CALCULATES THE 2N REAL*4 NUMBERS WHICH ARE ITS
+C  NOTE  --  FOURIER TRANSFORM.  THE EVEN NUMBERED ELEMENTS OF THE TRANSFORM
+C  NOTE  --  (0, 2, 4, . . ., 2N-2) ARE RETURNED IN X AND THE ODD NUMBERED
+C  NOTE  --  ELEMENTS (1, 3, 5, . . ., 2N-1) IN Y.
+C  NOTE  --
+C  NOTE  --  A FINITE HERMITIAN SEQUENCE OF LENGTH 2N CONTAINS N + 1 UNIQUE
+C  NOTE  --  REAL*4 NUMBERS AND N - 1 UNIQUE IMAGINARY NUMBERS.  FOR CONVENIENCE
+C  NOTE  --  THE REAL*4 VALUE FOR X(N) IS NOW STORED AT X(N+1) INSTEAD OF Y(0).
+C  NOTE  --  THE ROUTINE RETURNS WITH X(N+1) SET TO 0.0
+C------------------------------------------------------------------------------
+      DBTWON=DFLOAT(2*N)
+      ERROR=.FALSE.
+      HERMFT = 0
+      ERRCOD = GRIDIM(N,IDIM,ERROR,LSEPU,LSEPV,LSEPW,
+     1    LGLIMV,LGLIMW)
+      IF(ERROR) GO TO 600
+      J=N*LSEPU
+      LINDU=1-LSEPV-LSEPW
+C--
+      DO 100 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 100 LDXW=LSEPW,LGLIMW,LSEPW
+      I=LINDV+LDXW
+      L = I + J
+      A = X(I)
+      B = X(L)
+      X(L)=0.0
+      X(I) = A + B
+      Y(I) = A - B
+  100 CONTINUE
+C--
+      N OVER 2 = N/2 + 1
+      IF (N OVER 2 .LT. 2) GO TO 500
+      DBANGL=DBPI2/DBTWON
+      IF ( FORWARD .LT. 0) DBANGL = -DBANGL 
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      DO 400 I0 = 2, N OVER 2
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      CO=DBC1
+      SI=DBS1
+      K = (N + 2 - 2*I0)*LSEPU
+      K1 = (I0 - 1)*LSEPU + 1
+      LINDU=K1-LSEPV-LSEPW
+      DO 300 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 300 LDXW=LSEPW,LGLIMW,LSEPW
+      I=LINDV+LDXW
+      J = I + K
+      A = X(I) + X(J)
+      B = X(I) - X(J)
+      C = Y(I) + Y(J)
+      D = Y(I) - Y(J)
+      E = B*CO + C*SI
+      F = B*SI - C*CO
+      X(I) = A + F
+      X(J) = A - F
+      Y(I) = E + D
+      Y(J) = E - D
+  300 CONTINUE
+  400 CONTINUE
+C-----
+      HERMFT =  CMPLFT(X,Y,N,IDIM,FORWARD)
+C-----
+  500 CONTINUE
+      RETURN
+  600 CONTINUE
+C	ERROR IN CALL TO GRIDIM, REPORT IT BACK UP
+C     WRITE(NWRITE,700) N,IDIM
+      HERMFT = ERRCOD
+      RETURN
+C 700 FORMAT(1X,'**HERMFT** ERROR IN DIMENSIONS OF ARRAYS N=,IDIM=',
+C    1  I5,5X,3I5,1X,3I5,1X,3I5,1X,I5)
+C----------
+      END
+C   FFTSUBS_NOBIX   NAME=MDFTKD
+C*************************************************************************
+      INTEGER FUNCTION MDFTKD (N,NFACTR,NDIM,X,Y)
+C-------------------------------------------------------------------------
+C     MULTI-DIMENSIONAL COMPLEX FOURIER TRANSFORM KERNEL DRIVER
+C     SMALL REVISIONS DEC 1984. A.D. MCLACHLAN. LAST UPDATED 26 AUG 1987
+C     UPDATED MIKE PIQUE 3 NOV 1996 - Return error value instead of doing I/O
+C      ERROR 301: ILLEGAL FACTOR
+C-------------------------------------------------------------------------
+      INTEGER N
+      INTEGER NFACTR (*),NDIM(5)
+      REAL*4 X(*), Y(*)
+C-----
+      INTEGER NF, M, NP, NR, LSEPU
+C-------------------------------------------------------------------------
+C  INPUT   --  N          LENGTH OF TRANSFORM
+C  INPUT   --  NFACTR(*)  LIST OF PRIME FACTORS IN SPECIAL ORDER
+C  INPUT   --  NDIM(5)    ARRAY DIMENSIONING CONSTANTS
+C  IN/OUT  --  X(*)       REAL*4 PART OF DATA
+C  IN/OUT  --  Y(*)       IMAGINARY PART OF DATA
+C-------------------------------------------------------------------------
+C  CALLS   --  R2CFTK     RADIX 2 KERNEL
+C  CALLS   --  R3CFTK     RADIX 3 KERNEL
+C  CALLS   --  R4CFTK     RADIX 4 KERNEL
+C  CALLS   --  R5CFTK     RADIX 5 KERNEL
+C  CALLS   --  R8CFTK     RADIX 8 KERNEL
+C  CALLS   --  RPCFTK     PRIME RADIX KERNEL
+C-------------------------------------------------------------------------
+C  NOTE  --  DIMENSIONING REVISED A.D. MCLACHLAN AUGUST 1981
+C-------------------------------------------------------------------------
+C-------------------------------------------------------------------------
+      MDFTKD = 0
+      LSEPU=NDIM(1)
+      NF = 0
+      M = N
+C   --GO THROUGH ALL FACTORS, SKIPPING NP=1
+  100 CONTINUE
+      NF = NF + 1
+      NP = NFACTR(NF)
+      IF (NP.EQ.0) RETURN
+      M = M/NP
+      NR = M*LSEPU
+      IF (NP.GT.8) GO TO 900
+      GO TO (100, 200, 300, 400, 500, 600, 700, 800), NP
+      GO TO 1000
+C   --FACTOR OF 2
+  200 CONTINUE
+      CALL R2CFTK(N, M, X(1), Y(1), X(NR+1), Y(NR+1), NDIM)
+      GO TO 100
+C   --FACTOR OF 3
+  300 CONTINUE
+      CALL R3CFTK(N, M, X(1), Y(1), X(NR+1), Y(NR+1),
+     1            X(2*NR+1), Y(2*NR+1), NDIM)
+      GO TO 100
+C   --FACTOR OF 4
+  400 CONTINUE
+      CALL R4CFTK(N, M, X(1), Y(1), X(NR+1), Y(NR+1),
+     1     X(2*NR+1), Y(2*NR+1), X(3*NR+1), Y(3*NR+1), NDIM)
+      GO TO 100
+C   --FACTOR OF 5
+  500 CONTINUE
+      CALL R5CFTK(N, M, X(1), Y(1), X(NR+1), Y(NR+1),
+     1         X(2*NR+1), Y(2*NR+1), X(3*NR+1), Y(3*NR+1),
+     2         X(4*NR+1), Y(4*NR+1), NDIM)
+      GO TO 100
+C   --FACTOR 6 IS ILLEGAL
+  600 CONTINUE
+      GO TO 1000
+C   --7 TREATED AS A GENERAL PRIME
+  700 CONTINUE
+      GO TO 900
+C   --FACTOR OF 8
+  800 CONTINUE
+      CALL R8CFTK (N, M, X(1), Y(1), X(NR+1), Y(NR+1),
+     1             X(2*NR+1), Y(2*NR+1), X(3*NR+1), Y(3*NR+1),
+     2             X(4*NR+1), Y(4*NR+1), X(5*NR+1), Y(5*NR+1),
+     3             X(6*NR+1), Y(6*NR+1), X(7*NR+1), Y(7*NR+1),
+     4             NDIM)
+      GO TO 100
+C   --GENERAL PRIME FACTOR
+  900 CONTINUE
+      CALL RPCFTK(N, M, NP, NR, X, Y, NDIM)
+      GO TO 100
+C   --ERROR STOP
+ 1000 CONTINUE
+C  20 FORMAT (1X,'***MDFTKD*** ERROR- ILLEGAL FACTOR DETECTED =',I8)
+C     WRITE(NWRITE,20) NP
+      MDFTKD = 301
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=R2CFTK
+C**************************************************************************
+      SUBROUTINE R2CFTK (N, M, X0, Y0, X1, Y1, DIM)
+C--------------------------------------------------------------------------
+C     RADIX 2 MULTI-DIMENSIONAL COMPLEX FOURIER TRANSFORM KERNEL
+C     LAST UPDATED A.D. MCLACHLAN 26 AUG 1987.
+C--------------------------------------------------------------------------
+      INTEGER N, M, DIM(5)
+      REAL*4 X0(*),Y0(*),X1(*),Y1(*)
+C-----
+      LOGICAL FOLD,ZERO
+      INTEGER J,K,K0,M2,M OVER 2
+      INTEGER KK, MM2
+      INTEGER NS
+      REAL*4 C,IS,IU,RS,RU,S
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1
+      DOUBLE PRECISION DBANGL,DBFM2,DBCC
+      DATA DBPI2/6.28318530717958623D0/
+C
+C%%   DBPI2=8.0*DATAN2(1.0D0,1.0D0)
+C-----------------------------------------------------------------------------
+C  INPUT   --  N             LENGTH OF TRANSFORM
+C  INPUT   --  M             N DIVIDED BY CURRENT FACTORS
+C  IN/OUT  --  X0(*)...X1(*) REAL*4 VALUES AT 2 EQUALLY SEPARATED DATA POINTS
+C  IN/OUT  --  Y0(*)...Y1(*) IMAGINARY VALUES AT 2 EQUALLY SEPARATED DATA POINTS
+C  INPUT   --  DIM(5)        ARRAY DIMENSIONING CONSTANTS
+C-----------------------------------------------------------------------------
+C  CALLS   --  ***
+C-----------------------------------------------------------------------------
+C  NOTE  --  DIMENSIONING REVISED AND SIN COS RECALC A.D. MCLACHLAN AUG 1981
+C--------------------------------------------------------------------------
+      LSEPU=DIM(1)
+      LSEPV=DIM(2)
+      LSEPW=DIM(3)
+      LGLIMV=DIM(4)
+      LGLIMW=DIM(5)
+      NS=N*LSEPU
+      M2=M*2
+      DBFM2=DFLOAT(M2)
+      DBANGL=DBPI2/DBFM2
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      M OVER 2=M/2+1
+      MM2 = LSEPU*M2
+C--
+      DO 600 J=1,M OVER 2
+      FOLD=J.GT.1 .AND. 2*J.LT.M+2
+      K0 = (J-1)*LSEPU + 1
+      ZERO= J.EQ.1
+      IF (ZERO) GO TO 200
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      C=DBC1
+      S=DBS1
+      GO TO 200
+  100 CONTINUE
+      FOLD=.FALSE.
+      K0 = (M+1-J)*LSEPU + 1
+      C=-C
+  200 CONTINUE
+C--
+      DO 500 KK=K0,NS,MM2
+      LINDU=KK-LSEPV-LSEPW
+      DO 440 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 420 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      RS=X0(K)+X1(K)
+      IS=Y0(K)+Y1(K)
+      RU=X0(K)-X1(K)
+      IU=Y0(K)-Y1(K)
+      X0(K)=RS
+      Y0(K)=IS
+      IF (ZERO) GO TO 300
+      X1(K)=RU*C+IU*S
+      Y1(K)=IU*C-RU*S
+      GO TO 400
+  300 CONTINUE
+      X1(K)=RU
+      Y1(K)=IU
+  400 CONTINUE
+  420 CONTINUE
+  440 CONTINUE
+  500 CONTINUE
+      IF (FOLD) GO TO 100
+  600 CONTINUE
+C--
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=R3CFTK
+C**************************************************************************
+      SUBROUTINE R3CFTK (N, M, X0, Y0, X1, Y1, X2, Y2, DIM)
+C--------------------------------------------------------------------------
+C     RADIX 3 MULTI-DIMENSIONAL COMPLEX FOURIER TRANSFORM KERNEL
+C     LAST UPDATED A.D. MCLACHLAN 26 AUG 1987
+C--------------------------------------------------------------------------
+      INTEGER N, M, DIM(5)
+      REAL*4 X0(*),Y0(*),X1(*),Y1(*),X2(*),Y2(*)
+C-----
+      LOGICAL FOLD,ZERO
+      INTEGER J,K,K0,M3,M OVER 2
+      INTEGER KK,MM3
+      INTEGER NS
+      REAL*4 A,B,C1,C2,S1,S2,T
+      REAL*4 I0,I1,I2,IA,IB,IS,R0,R1,R2,RA,RB,RS
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1,DBCC
+      DOUBLE PRECISION DBANGL,DBFM3
+      DATA DBPI2/6.28318530717958623D0/
+      DATA  A/-0.5/, B/0.86602540/
+C-----------------------------------------------------------------------------
+C  INPUT   --  N             LENGTH OF TRANSFORM
+C  INPUT   --  M             N DIVIDED BY CURRENT FACTORS
+C  IN/OUT  --  X0(*)...X2(*) REAL*4 VALUES AT 3 EQUALLY SEPARATED DATA POINTS
+C  IN/OUT  --  Y0(*)...Y2(*) IMAGINARY VALUES AT 3 EQUALLY SEPARATED DATA POINTS
+C  INPUT   --  DIM(5)        ARRAY DIMENSIONING CONSTANTS
+C-----------------------------------------------------------------------------
+C  CALLS   --  ***
+C--------------------------------------------------------------------------
+C  NOTE  --  DIMENSIONING REVISED AND SIN COS RECALC A.D. MCLACHLAN AUG 1981
+C-----------------------------------------------------------------------------
+      LSEPU=DIM(1)
+      LSEPV=DIM(2)
+      LSEPW=DIM(3)
+      LGLIMV=DIM(4)
+      LGLIMW=DIM(5)
+      NS = N*LSEPU
+      M3=M*3
+      DBFM3=DFLOAT(M3)
+      DBANGL=DBPI2/DBFM3
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      MM3 = LSEPU*M3
+      M OVER 2=M/2+1
+C--
+      DO 600 J=1,M OVER 2
+      FOLD=J.GT.1 .AND. 2*J.LT.M+2
+      K0 = (J-1)*LSEPU + 1
+      ZERO= J.EQ.1
+      IF (ZERO) GO TO 200
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      C1=DBC1
+      S1=DBS1
+      C2=C1*C1-S1*S1
+      S2=S1*C1+C1*S1
+      GO TO 200
+  100 CONTINUE
+      FOLD=.FALSE.
+      K0 = (M+1-J)*LSEPU + 1
+      T=C1*A+S1*B
+      S1=C1*B-S1*A
+      C1=T
+      T=C2*A-S2*B
+      S2=-C2*B-S2*A
+      C2=T
+  200 CONTINUE
+C--
+      DO 500 KK = K0, NS, MM3
+      LINDU=KK-LSEPV-LSEPW
+      DO 440 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 420 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      R0=X0(K)
+      I0=Y0(K)
+      RS=X1(K)+X2(K)
+      IS=Y1(K)+Y2(K)
+      X0(K)=R0+RS
+      Y0(K)=I0+IS
+      RA=R0+RS*A
+      IA=I0+IS*A
+      RB=(X1(K)-X2(K))*B
+      IB=(Y1(K)-Y2(K))*B
+      IF (ZERO) GO TO 300
+      R1=RA+IB
+      I1=IA-RB
+      R2=RA-IB
+      I2=IA+RB
+      X1(K)=R1*C1+I1*S1
+      Y1(K)=I1*C1-R1*S1
+      X2(K)=R2*C2+I2*S2
+      Y2(K)=I2*C2-R2*S2
+      GO TO 400
+  300 CONTINUE
+      X1(K)=RA+IB
+      Y1(K)=IA-RB
+      X2(K)=RA-IB
+      Y2(K)=IA+RB
+  400 CONTINUE
+  420 CONTINUE
+  440 CONTINUE
+  500 CONTINUE
+      IF (FOLD) GO TO 100
+  600 CONTINUE
+C--
+      RETURN
+      END
+C   FFTSUBS_NOBIX NAME=R4CFTK
+C**************************************************************************
+      SUBROUTINE R4CFTK (N,M,X0,Y0,X1,Y1,X2,Y2,X3,Y3,DIM)
+C--------------------------------------------------------------------------
+C     RADIX 4 MULTI-DIMENSIONAL COMPLEX FOURIER TRANSFORM KERNEL
+C     LAST UPDATED A.D. MCLACHLAN 26 AUG 1987
+C--------------------------------------------------------------------------
+      INTEGER N, M, DIM(5)
+      REAL*4 X0(*),Y0(*),X1(*),Y1(*)
+      REAL*4 X2(*),Y2(*),X3(*),Y3(*)
+C-----
+      LOGICAL FOLD,ZERO
+      INTEGER J,K,K0,M4,M OVER 2
+      INTEGER KK,MM4
+      INTEGER NS
+      REAL*4 C1,C2,C3,S1,S2,S3,T
+      REAL*4 I1,I2,I3,IS0,IS1,IU0,IU1,R1,R2,R3,RS0,RS1,RU0,RU1
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1,DBCC
+      DOUBLE PRECISION DBANGL,DBFM4
+      DATA DBPI2/6.28318530717958623D0/
+C
+C%%   DBPI2=8.0D0*DATAN2(1.0D0,1.0D0)
+C-----------------------------------------------------------------------------
+C  INPUT   --  N             LENGTH OF TRANSFORM
+C  INPUT   --  M             N DIVIDED BY CURRENT FACTORS
+C  IN/OUT  --  X0(*)...X3(*) REAL*4 VALUES AT 4 EQUALLY SEPARATED DATA POINTS
+C  IN/OUT  --  Y0(*)...Y3(*) IMAGINARY VALUES AT 4 EQUALLY SEPARATED DATA POINTS
+C  INPUT   --  DIM(5)        ARRAY DIMENSIONING CONSTANTS
+C-----------------------------------------------------------------------------
+C  CALLS   --  ***
+C-----------------------------------------------------------------------------
+C  NOTE  --   INDEXING REVISED AND SIN COS RECALC A.D. MCLACHLAN AUG 1981
+C--------------------------------------------------------------------------
+      LSEPU=DIM(1)
+      LSEPV=DIM(2)
+      LSEPW=DIM(3)
+      LGLIMV=DIM(4)
+      LGLIMW=DIM(5)
+      NS = N*LSEPU
+      M4=M*4
+      DBFM4=DFLOAT(M4)
+      DBANGL=DBPI2/DBFM4
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      MM4 = LSEPU*M4
+      M OVER 2=M/2+1
+C--
+      DO 600 J=1,M OVER 2
+      FOLD=J.GT.1 .AND. 2*J.LT.M+2
+      K0 = (J-1)*LSEPU + 1
+      ZERO= J.EQ.1
+      IF (ZERO) GO TO 200
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      C1=DBC1
+      S1=DBS1
+      C2=C1*C1-S1*S1
+      S2=S1*C1+C1*S1
+      C3=C2*C1-S2*S1
+      S3=S2*C1+C2*S1
+      GO TO 200
+  100 CONTINUE
+      FOLD=.FALSE.
+      K0 = (M+1-J)*LSEPU + 1
+      T=C1
+      C1=S1
+      S1=T
+      C2=-C2
+      T=C3
+      C3=-S3
+      S3=-T
+  200 CONTINUE
+C--
+      DO 500 KK = K0, NS, MM4
+      LINDU=KK-LSEPV-LSEPW
+      DO 440 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 420 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      RS0=X0(K)+X2(K)
+      IS0=Y0(K)+Y2(K)
+      RU0=X0(K)-X2(K)
+      IU0=Y0(K)-Y2(K)
+      RS1=X1(K)+X3(K)
+      IS1=Y1(K)+Y3(K)
+      RU1=X1(K)-X3(K)
+      IU1=Y1(K)-Y3(K)
+      X0(K)=RS0+RS1
+      Y0(K)=IS0+IS1
+      IF (ZERO) GO TO 300
+      R1=RU0+IU1
+      I1=IU0-RU1
+      R2=RS0-RS1
+      I2=IS0-IS1
+      R3=RU0-IU1
+      I3=IU0+RU1
+      X2(K)=R1*C1+I1*S1
+      Y2(K)=I1*C1-R1*S1
+      X1(K)=R2*C2+I2*S2
+      Y1(K)=I2*C2-R2*S2
+      X3(K)=R3*C3+I3*S3
+      Y3(K)=I3*C3-R3*S3
+      GO TO 400
+  300 CONTINUE
+      X2(K)=RU0+IU1
+      Y2(K)=IU0-RU1
+      X1(K)=RS0-RS1
+      Y1(K)=IS0-IS1
+      X3(K)=RU0-IU1
+      Y3(K)=IU0+RU1
+  400 CONTINUE
+  420 CONTINUE
+  440 CONTINUE
+  500 CONTINUE
+      IF (FOLD) GO TO 100
+  600 CONTINUE
+C--
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=R5CFTK
+C**********************************************************************
+      SUBROUTINE R5CFTK (N,M,X0,Y0,X1,Y1,X2,Y2,X3,Y3,X4,Y4,DIM)
+C----------------------------------------------------------------------
+C     RADIX 5 MULTI-DIMENSIONAL COMPLEX FOURIER TRANSFORM KERNEL
+C     LAST UPDATED A.D. MCLACHLAN 26 AUG 1987
+C----------------------------------------------------------------------
+      INTEGER N, M, DIM(5)
+      REAL*4 X0(*),Y0(*),X1(*),Y1(*),X2(*),Y2(*)
+      REAL*4 X3(*),Y3(*),X4(*),Y4(*)
+C-----
+      LOGICAL FOLD,ZERO
+      INTEGER J,K,K0,M5,M OVER 2
+      INTEGER KK,MM5
+      INTEGER NS
+      REAL*4 A1,A2,B1,B2,C1,C2,C3,C4,S1,S2,S3,S4,T
+      REAL*4 R0,R1,R2,R3,R4,RA1,RA2,RB1,RB2,RS1,RS2,RU1,RU2
+      REAL*4 I0,I1,I2,I3,I4,IA1,IA2,IB1,IB2,IS1,IS2,IU1,IU2
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1,DBCC
+      DOUBLE PRECISION DBANGL,DBFM5
+      DATA  A1/0.30901699/, B1/0.95105652/,
+     1      A2/-0.80901699/, B2/0.58778525/
+      DATA DBPI2/6.28318530717958623D0/
+C
+C%%     DBPI2=8.0D0*DATAN2(1.0D0,1.0D0)
+C-----------------------------------------------------------------------------
+C  INPUT   --  N             LENGTH OF TRANSFORM
+C  INPUT   --  M             N DIVIDED BY CURRENT FACTORS
+C  IN/OUT  --  X0(*)...X4(*) REAL*4 VALUES AT 4 EQUALLY SEPARATED DATA POINTS
+C  IN/OUT  --  Y0(*)...Y4(*) IMAGINARY VALUES AT 4 EQUALLY SEPARATED DATA POINTS
+C  INPUT   --  DIM(5)        ARRAY DIMENSIONING CONSTANTS
+C-----------------------------------------------------------------------------
+C  CALLS   --  ***
+C----------------------------------------------------------------------
+C  NOTE  --  DIMENSIONING REVISED AND SIN COS RECALCULATED
+C  NOTE  --   A.D. MCLACHLAN. AUG 1981
+C----------------------------------------------------------------------
+      LSEPU=DIM(1)
+      LSEPV=DIM(2)
+      LSEPW=DIM(3)
+      LGLIMV=DIM(4)
+      LGLIMW=DIM(5)
+      NS = N*LSEPU
+      M5=M*5
+      DBFM5=DFLOAT(M5)
+      DBANGL=DBPI2/DBFM5
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      MM5 = LSEPU*M5
+      M OVER 2=M/2+1
+C--
+      DO 600 J=1,M OVER 2
+      FOLD=J.GT.1 .AND. 2*J.LT.M+2
+      K0 = (J-1)*LSEPU + 1
+      ZERO= J.EQ.1
+      IF (ZERO) GO TO 200
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      C1=DBC1
+      S1=DBS1
+      C2=C1*C1-S1*S1
+      S2=S1*C1+C1*S1
+      C3=C2*C1-S2*S1
+      S3=S2*C1+C2*S1
+      C4=C2*C2-S2*S2
+      S4=S2*C2+C2*S2
+      GO TO 200
+  100 CONTINUE
+      FOLD=.FALSE.
+      K0 = (M+1-J)*LSEPU + 1
+      T=C1*A1+S1*B1
+      S1=C1*B1-S1*A1
+      C1=T
+      T=C2*A2+S2*B2
+      S2=C2*B2-S2*A2
+      C2=T
+      T=C3*A2-S3*B2
+      S3=-C3*B2-S3*A2
+      C3=T
+      T=C4*A1-S4*B1
+      S4=-C4*B1-S4*A1
+      C4=T
+  200 CONTINUE
+C--
+      DO 500 KK = K0, NS, MM5
+      LINDU=KK-LSEPV-LSEPW
+      DO 440 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 420 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      R0=X0(K)
+      I0=Y0(K)
+      RS1=X1(K)+X4(K)
+      IS1=Y1(K)+Y4(K)
+      RU1=X1(K)-X4(K)
+      IU1=Y1(K)-Y4(K)
+      RS2=X2(K)+X3(K)
+      IS2=Y2(K)+Y3(K)
+      RU2=X2(K)-X3(K)
+      IU2=Y2(K)-Y3(K)
+      X0(K)=R0+RS1+RS2
+      Y0(K)=I0+IS1+IS2
+      RA1=R0+RS1*A1+RS2*A2
+      IA1=I0+IS1*A1+IS2*A2
+      RA2=R0+RS1*A2+RS2*A1
+      IA2=I0+IS1*A2+IS2*A1
+      RB1=RU1*B1+RU2*B2
+      IB1=IU1*B1+IU2*B2
+      RB2=RU1*B2-RU2*B1
+      IB2=IU1*B2-IU2*B1
+      IF (ZERO) GO TO 300
+      R1=RA1+IB1
+      I1=IA1-RB1
+      R2=RA2+IB2
+      I2=IA2-RB2
+      R3=RA2-IB2
+      I3=IA2+RB2
+      R4=RA1-IB1
+      I4=IA1+RB1
+      X1(K)=R1*C1+I1*S1
+      Y1(K)=I1*C1-R1*S1
+      X2(K)=R2*C2+I2*S2
+      Y2(K)=I2*C2-R2*S2
+      X3(K)=R3*C3+I3*S3
+      Y3(K)=I3*C3-R3*S3
+      X4(K)=R4*C4+I4*S4
+      Y4(K)=I4*C4-R4*S4
+      GO TO 400
+  300 CONTINUE
+      X1(K)=RA1+IB1
+      Y1(K)=IA1-RB1
+      X2(K)=RA2+IB2
+      Y2(K)=IA2-RB2
+      X3(K)=RA2-IB2
+      Y3(K)=IA2+RB2
+      X4(K)=RA1-IB1
+      Y4(K)=IA1+RB1
+  400 CONTINUE
+  420 CONTINUE
+  440 CONTINUE
+  500 CONTINUE
+      IF (FOLD) GO TO 100
+  600 CONTINUE
+C--
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=R8CFTK
+C************************************************************************
+      SUBROUTINE R8CFTK(N,M,X0,Y0,X1,Y1,X2,Y2,X3,Y3,X4,Y4,
+     1    X5,Y5,X6,Y6,X7,Y7, DIM)
+C------------------------------------------------------------------------
+C     RADIX 8 MULTI-DIMENSIONAL COMPLEX FOURIER TRANSFORM KERNEL
+C     LAST UPDATED A.D. MCLACHLAN 26 AUG 1987
+C------------------------------------------------------------------------
+      INTEGER N, M, DIM(5)
+      REAL*4 X0(*),Y0(*),X1(*),Y1(*),X2(*),Y2(*)
+      REAL*4 X3(*),Y3(*),X4(*),Y4(*),X5(*),Y5(*)
+      REAL*4 X6(*),Y6(*),X7(*),Y7(*)
+C-----
+      LOGICAL FOLD,ZERO
+      INTEGER J,K,K0,M8,M OVER 2
+      INTEGER KK,MM8
+      INTEGER NS
+      REAL*4 C1,C2,C3,C4,C5,C6,C7,E,S1,S2,S3,S4,S5,S6,S7,T
+      REAL*4 R1,R2,R3,R4,R5,R6,R7,RS0,RS1,RS2,RS3,RU0,RU1,RU2,RU3
+      REAL*4 I1,I2,I3,I4,I5,I6,I7,IS0,IS1,IS2,IS3,IU0,IU1,IU2,IU3
+      REAL*4 RSS0,RSS1,RSU0,RSU1,RUS0,RUS1,RUU0,RUU1
+      REAL*4 ISS0,ISS1,ISU0,ISU1,IUS0,IUS1,IUU0,IUU1
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1,DBCC
+      DOUBLE PRECISION DBANGL,DBFM8
+      DATA DBPI2/6.28318530717958623D0/
+      DATA  E/0.70710678/
+C%%   DBPI2=8.0*DATAN2(1.0D0,1.0D0)
+C-----------------------------------------------------------------------------
+C  INPUT   --  N             LENGTH OF TRANSFORM
+C  INPUT   --  M             N DIVIDED BY CURRENT FACTORS
+C  IN/OUT  --  X0(*)...X7(*) REAL*4 VALUES AT 8 EQUALLY SEPARATED DATA POINTS
+C  IN/OUT  --  Y0(*)...Y7(*) IMAGINARY VALUES AT 8 EQUALLY SEPARATED DATA POINTS
+C  INPUT   --  DIM(5)        ARRAY DIMENSIONING CONSTANTS
+C-----------------------------------------------------------------------------
+C  CALLS   --  ***
+C-----------------------------------------------------------------------------
+C  NOTE  --  DIMENSIONING REVISED AND SIN COS RECALC A.D. MCLACHLAN AUG 1981
+C-----------------------------------------------------------------------------
+      LSEPU=DIM(1)
+      LSEPV=DIM(2)
+      LSEPW=DIM(3)
+      LGLIMV=DIM(4)
+      LGLIMW=DIM(5)
+      NS = N*LSEPU
+      M8=M*8
+      DBFM8=DFLOAT(M8)
+      DBANGL=DBPI2/DBFM8
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      MM8 = LSEPU*M8
+      M OVER 2=M/2+1
+C--
+      DO 600 J=1,M OVER 2
+      FOLD=J.GT.1 .AND. 2*J.LT.M+2
+      K0 = (J-1)*LSEPU + 1
+      ZERO= J.EQ.1
+      IF (ZERO) GO TO 200
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      C1=DBC1
+      S1=DBS1
+      C2=C1*C1-S1*S1
+      S2=S1*C1+C1*S1
+      C3=C2*C1-S2*S1
+      S3=S2*C1+C2*S1
+      C4=C2*C2-S2*S2
+      S4=S2*C2+C2*S2
+      C5=C4*C1-S4*S1
+      S5=S4*C1+C4*S1
+      C6=C4*C2-S4*S2
+      S6=S4*C2+C4*S2
+      C7=C4*C3-S4*S3
+      S7=S4*C3+C4*S3
+      GO TO 200
+  100 CONTINUE
+      FOLD=.FALSE.
+      K0 = (M+1-J)*LSEPU + 1
+      T=(C1+S1)*E
+      S1=(C1-S1)*E
+      C1=T
+      T=S2
+      S2=C2
+      C2=T
+      T=(-C3+S3)*E
+      S3=(C3+S3)*E
+      C3=T
+      C4=-C4
+      T=-(C5+S5)*E
+      S5=(-C5+S5)*E
+      C5=T
+      T=-S6
+      S6=-C6
+      C6=T
+      T=(C7-S7)*E
+      S7=-(C7+S7)*E
+      C7=T
+  200 CONTINUE
+C--
+      DO 500 KK = K0, NS, MM8
+      LINDU=KK-LSEPV-LSEPW
+      DO 440 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 420 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      RS0=X0(K)+X4(K)
+      IS0=Y0(K)+Y4(K)
+      RU0=X0(K)-X4(K)
+      IU0=Y0(K)-Y4(K)
+      RS1=X1(K)+X5(K)
+      IS1=Y1(K)+Y5(K)
+      RU1=X1(K)-X5(K)
+      IU1=Y1(K)-Y5(K)
+      RS2=X2(K)+X6(K)
+      IS2=Y2(K)+Y6(K)
+      RU2=X2(K)-X6(K)
+      IU2=Y2(K)-Y6(K)
+      RS3=X3(K)+X7(K)
+      IS3=Y3(K)+Y7(K)
+      RU3=X3(K)-X7(K)
+      IU3=Y3(K)-Y7(K)
+      RSS0=RS0+RS2
+      ISS0=IS0+IS2
+      RSU0=RS0-RS2
+      ISU0=IS0-IS2
+      RSS1=RS1+RS3
+      ISS1=IS1+IS3
+      RSU1=RS1-RS3
+      ISU1=IS1-IS3
+      RUS0=RU0-IU2
+      IUS0=IU0+RU2
+      RUU0=RU0+IU2
+      IUU0=IU0-RU2
+      RUS1=RU1-IU3
+      IUS1=IU1+RU3
+      RUU1=RU1+IU3
+      IUU1=IU1-RU3
+      T=(RUS1+IUS1)*E
+      IUS1=(IUS1-RUS1)*E
+      RUS1=T
+      T=(RUU1+IUU1)*E
+      IUU1=(IUU1-RUU1)*E
+      RUU1=T
+      X0(K)=RSS0+RSS1
+      Y0(K)=ISS0+ISS1
+      IF (ZERO) GO TO 300
+      R1=RUU0+RUU1
+      I1=IUU0+IUU1
+      R2=RSU0+ISU1
+      I2=ISU0-RSU1
+      R3=RUS0+IUS1
+      I3=IUS0-RUS1
+      R4=RSS0-RSS1
+      I4=ISS0-ISS1
+      R5=RUU0-RUU1
+      I5=IUU0-IUU1
+      R6=RSU0-ISU1
+      I6=ISU0+RSU1
+      R7=RUS0-IUS1
+      I7=IUS0+RUS1
+      X4(K)=R1*C1+I1*S1
+      Y4(K)=I1*C1-R1*S1
+      X2(K)=R2*C2+I2*S2
+      Y2(K)=I2*C2-R2*S2
+      X6(K)=R3*C3+I3*S3
+      Y6(K)=I3*C3-R3*S3
+      X1(K)=R4*C4+I4*S4
+      Y1(K)=I4*C4-R4*S4
+      X5(K)=R5*C5+I5*S5
+      Y5(K)=I5*C5-R5*S5
+      X3(K)=R6*C6+I6*S6
+      Y3(K)=I6*C6-R6*S6
+      X7(K)=R7*C7+I7*S7
+      Y7(K)=I7*C7-R7*S7
+      GO TO 400
+  300 CONTINUE
+      X4(K)=RUU0+RUU1
+      Y4(K)=IUU0+IUU1
+      X2(K)=RSU0+ISU1
+      Y2(K)=ISU0-RSU1
+      X6(K)=RUS0+IUS1
+      Y6(K)=IUS0-RUS1
+      X1(K)=RSS0-RSS1
+      Y1(K)=ISS0-ISS1
+      X5(K)=RUU0-RUU1
+      Y5(K)=IUU0-IUU1
+      X3(K)=RSU0-ISU1
+      Y3(K)=ISU0+RSU1
+      X7(K)=RUS0-IUS1
+      Y7(K)=IUS0+RUS1
+  400 CONTINUE
+  420 CONTINUE
+  440 CONTINUE
+  500 CONTINUE
+      IF (FOLD) GO TO 100
+  600 CONTINUE
+C--
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=REALFT
+C**********************************************************************
+      INTEGER FUNCTION REALFT (EVEN, ODD, N, IDIM,FORWARD)
+C----------------------------------------------------------------------
+C     REAL*4 FOURIER TRANSFORM
+C     UPDATED A.D. MCLACHLAN 26 AUG 1987
+C     UPDATED MIKE PIQUE 3 NOV 1996 - Return error value instead of doing I/O
+C----------------------------------------------------------------------
+      REAL*4 EVEN(*), ODD(*)
+      INTEGER N
+      INTEGER FORWARD
+      INTEGER IDIM(10)
+C-----  External function declarations
+      INTEGER GRIDIM, CMPLFT
+C------
+      INTEGER DIM(5)
+      REAL*4 A, B, C, D, E, F,  CO, SI
+      LOGICAL ERROR
+      INTEGER ERRCOD
+      INTEGER LSEPU,LSEPV,LSEPW,LGLIMV,LGLIMW
+      EQUIVALENCE (LSEPU,DIM(1)),(LSEPV,DIM(2)),(LSEPW,DIM(3))
+      EQUIVALENCE (LGLIMV,DIM(4)),(LGLIMW,DIM(5))
+      INTEGER I, J, K, L, N OVER 2, I0, LINDU,LINDV,LDXV,LDXW
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1,DBCC
+      DOUBLE PRECISION DBANGL,DBTWON
+      DATA DBPI2/6.28318530717958623D0/
+C
+C%%   DBPI2=8.0D0*DATAN2(1.0D0,1.0D0)
+C-----------------------------------------------------------------------
+C  IN/OUT  --  EVEN(*)        EVEN PART OF DATA/TRANSFORM
+C  IN/OUT  --  ODD(*)         ODD PART OF DATA/TRANSFORM
+C  INPUT   --  N              LENGTH OF TRANSFORM AXIS
+C  INPUT   --  IDIM(10)       DIMENSIONING CONSTANTS FOR 1,2 OR 3-D ARRAY
+C-----------------------------------------------------------------------
+C  CALLS   --  GRIDIM         CALCULATE DIMENSIONING CONSTANTS
+C  CALLS   --  CMPLFT         COMPLEX FOURIER TRANSFORM
+C----------------------------------------------------------------------
+C  NOTE  --  INDEXING REVISED AND SIN COS RECALC A.D.MCLACHLAN AUGUST 1981
+C  NOTE  --
+C  NOTE  --  GIVEN A REAL*4 SEQUENCE OF LENGTH 2N THIS SUBROUTINE CALCULATES THE
+C  NOTE  --  UNIQUE PART OF THE FOURIER TRANSFORM.  THE FOURIER TRANSFORM HAS
+C  NOTE  --  N + 1 UNIQUE REAL*4 PARTS AND N - 1 UNIQUE IMAGINARY PARTS.  SINCE
+C  NOTE  --  THE REAL*4 PART AT X(N) IS FREQUENTLY OF INTEREST, THIS SUBROUTINE
+C  NOTE  --  STORES IT AT X(N) RATHER THAN IN Y(0).  THEREFORE X AND Y MUST BE
+C  NOTE  --  OF LENGTH N + 1 INSTEAD OF N.  NOTE THAT THIS STORAGE ARRANGEMENT
+C  NOTE  --  IS NOW SAME AS THAT EMPLOYED BY THE HERMITIAN FOURIER TRANSFORM
+C  NOTE  --  SUBROUTINE.
+C  NOTE  --
+C  NOTE  --  FOR CONVENIENCE THE DATA IS PRESENTED IN TWO PARTS, THE FIRST
+C  NOTE  --  CONTAINING THE EVEN NUMBERED REAL*4 TERMS AND THE SECOND CONTAINING
+C  NOTE  --  THE ODD NUMBERED TERMS (NUMBERING STARTING AT 0).  ON RETURN THE
+C  NOTE  --  REAL*4 PART OF THE TRANSFORM REPLACES THE EVEN TERMS AND THE
+C  NOTE  --  IMAGINARY PART OF THE TRANSFORM REPLACES THE ODD TERMS.
+C------------------------------------------------------------------------------
+C  NOTE  --  INDEXING -- THE ARRANGEMENT OF THE MULTI-DIMENSIONAL DATA IS
+C  NOTE  --  SPECIFIED BY THE INTEGER ARRAY D, THE VALUES OF WHICH ARE USED AS
+C  NOTE  --  CONTROL PARAMETERS IN DO LOOPS.  WHEN IT IS DESIRED TO COVER ALL
+C  NOTE  --  ELEMENTS OF THE DATA FOR WHICH THE SUBSCRIPT BEING TRANSFORMED HAS
+C  NOTE  --  THE VALUE I0, THE FOLLOWING IS USED.
+C  NOTE  --
+C  NOTE  --            I1 = (I0 - 1)*LSEPU + 1
+C  NOTE  --            LINDU=I1-LSEPV-LSEPW
+C  NOTE  --            DO 100 LDXV=LSEPV,LGLIMV,LSEPV
+C  NOTE  --            LINDV=LINDU+LDXV
+C  NOTE  --            DO 100 LDXW=LSEPW,LGLIMW,LSEPW
+C  NOTE  --            I=LINDV+LDXW
+C  NOTE  --            . . .
+C  NOTE  --            . . .
+C  NOTE  --        100 CONTINUE
+C  NOTE  --  HERE LSEPU=D(1) IS SEPARATION BETWEEN ADJACENT ELEMENTS OF X
+C  NOTE  --  (OR OF Y) ALONG THE INDEX IU WHICH IS BEING TRANSFORMED.
+C  NOTE  --  LSEPV=D(2) AND LSEPW=D(3) ARE SEPARATION OF ADJACENT ELEMENTS
+C  NOTE  --  ALONG THE SECOND AND THIRD DIRECTIONS INDEXED BY IV,IW.
+C  NOTE  --  LGLIMV=D(4)=LSEPV*LGRIDV AND LGLIMW=D(5)=LSEPW*LGRIDW WITH
+C  NOTE  --  LGRIDV, LGRIDW BEING THE NUMBER OF GRID POINTS IN THE X (OR Y)
+C  NOTE  --  ARRAYS ALONG THE IV AND IW AXES
+C  NOTE  --  WITH THIS INDEXING IT IS POSSIBLE TO USE A NUMBER OF ARRANGEMENTS
+C  NOTE  --  OF THE DATA, INCLUDING NORMAL FORTRAN COMPLEX NUMBERS
+C  NOTE  --  (LSEPU=D(1) = 2)
+C  NOTE  --  THE SUBROUTINE GRIDIM CALCULATES THE ELEMENTS OF D ARRAY FROM THE
+C  NOTE  --  IDIM ARRAY, WHERE
+C  NOTE  --    IDIM(1)=IU               AXIS ALONG WHICH TRANSFORM IS DONE
+C  NOTE  --    IDIM(2)=IV               2ND AXIS NORMAL TO IU
+C  NOTE  --    IDIM(3)=IW               3RD AXIS NORMAL TO IU AND IV
+C  NOTE  --    IDIM(4)=NDIMX            ARRAY DIMENSION OF X(OR Y) ALONG A AXIS
+C  NOTE  --    IDIM(5)=NDIMY            ARRAY DIMENSION ALONG B AXIS
+C  NOTE  --    IDIM(6)=NDIMZ            ARRAY DIMENSION ALONG C AXIS
+C  NOTE  --    IDIM(7)=NGRIDX           NUMBER OF GRID POINTS USED ALONG A AXIS
+C  NOTE  --    IDIM(8)=NGRIDY           NUMBER OF GRID POINTS USED ALONG B AXIS
+C  NOTE  --    IDIM(9)=NGRIDZ           NUMBER OF GRID POINTS USED ALONG C AXIS
+C  NOTE  --    IDIM(10)=ICMPLX          VALUE 1 FOR SEPARATE X,Y ARRAYS,2 FOR
+C  NOTE  --                             INTERLEAVED ARRAYS(X,I*Y)
+C  NOTE  --  NOTE THAT IU,IV,IW MUST BE A PERMUTATION OF 1,2,3 AND EACH
+C  NOTE  --  NGRID.LE.NDIM.
+C  NOTE  --  ALSO NGRID FOR AXIS IU IS SAME AS N, LENGTH OF TRANSFORM.
+C  NOTE  --  THIS ALLOWS TRANSFORM TO BE DONE FOR ARRAYS EMBEDDED IN PART OF A
+C  NOTE  --  LARGER ARRAY AND CHOICE OF AXES IN ANY ORDER
+C-------------------------------------------------------------------------------
+      REALFT = 0
+      DBTWON=DFLOAT(2*N)
+      ERROR=.FALSE.
+      ERRCOD = GRIDIM(N,IDIM,ERROR,LSEPU,LSEPV,LSEPW,
+     1    LGLIMV,LGLIMW)
+      IF(ERROR) GO TO 700
+C-----------------------------------------
+      ERRCOD = CMPLFT(EVEN,ODD,N,IDIM,FORWARD)
+C-----------------------------------------
+      N OVER 2 = N/2 + 1
+C--
+      IF (N OVER 2 .LT. 2) GO TO 400
+      DBANGL=DBPI2/DBTWON
+      IF ( FORWARD .LT. 0) DBANGL = -DBANGL
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      DO 300 I = 2, N OVER 2
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      CO=DBC1
+      SI=DBS1
+      I0 = (I - 1)*LSEPU + 1
+      J = (N + 2 - 2*I)*LSEPU
+      LINDU=I0-LSEPV-LSEPW
+      DO 200 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 200 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      L = K + J
+      A = (EVEN(L) + EVEN(K))/2.0
+      C = (EVEN(L) - EVEN(K))/2.0
+      B = (ODD(L) + ODD(K))/2.0
+      D = (ODD(L) - ODD(K))/2.0
+      E = C*SI + B*CO
+      F = C*CO - B*SI
+      EVEN(K) = A + E
+      EVEN(L) = A - E
+      ODD(K) = F - D
+      ODD(L) = F + D
+  200 CONTINUE
+  300 CONTINUE
+C--
+  400 CONTINUE
+      IF (N .LT. 1) GO TO 600
+      J = N*LSEPU
+      LINDU=1-LSEPV-LSEPW
+      DO 500 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 500 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      L = K + J
+      EVEN(L) = EVEN(K) - ODD(K)
+      ODD(L) = 0.0
+      EVEN(K) = EVEN(K) + ODD(K)
+      ODD(K) = 0.0
+  500 CONTINUE
+C--
+  600 CONTINUE
+      RETURN
+C--
+  700 CONTINUE
+C     WRITE(NWRITE,800) N,IDIM
+      REALFT = ERRCOD
+      RETURN
+C 800 FORMAT(1X,'**REALFT** ERROR IN DIMENSIONS OF ARRAYS N=,IDIM=',
+C    1  I5,5X,3I5,1X,3I5,1X,3I5,1X,I5)
+      END
+C   FFTSUBS_NOBIX   NAME=RPCFTK
+C******************************************************************************
+      SUBROUTINE RPCFTK (N, M, P, R, X, Y, DIM)
+C------------------------------------------------------------------------------
+C     RADIX PRIME MULTI-DIMENSIONAL COMPLEX FOURIER TRANSFORM KERNEL
+C     LAST UPDATED A.D. MCLACHLAN 26 AUG 1987
+C------------------------------------------------------------------------------
+      INTEGER N, M, P, R, DIM(5)
+      REAL*4 X(R,P), Y(R,P)
+C-----
+      LOGICAL FOLD,ZERO
+      REAL*4 IS,IU,RS,RU,T,XT,YT
+      INTEGER J,JJ,K0,K,M OVER 2,MP,PM,PP,U,V
+      INTEGER KK,MMP
+      INTEGER NS
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1,DBCC
+      DOUBLE PRECISION DBANGL,DBFP,DBFMP
+C--
+      PARAMETER(MPPMAX=9,MPMAX2=2*MPPMAX)
+      REAL*4 AA(MPPMAX,MPPMAX),BB(MPPMAX,MPPMAX)
+      REAL*4 A(MPMAX2),B(MPMAX2),C(MPMAX2),S(MPMAX2)
+      REAL*4 IA(MPPMAX),IB(MPPMAX),RA(MPPMAX),RB(MPPMAX)
+      DATA DBPI2/6.28318530717958623D0/
+C--
+C%%   DBPI2=8.0D0*DATAN2(1.0D0,1.0D0)
+C-----------------------------------------------------------------------------
+C  INPUT   --  N             LENGTH OF TRANSFORM
+C  INPUT   --  M             N DIVIDED BY CURRENT FACTORS
+C  INPUT   --  P             PRIME NUMBER
+C  INPUT   --  R             SEPARATION BETWEEN ADJACENT ELEMENTS OF X,Y
+C  IN/OUT  --  X(R,P)        REAL*4 VALUES AT P EQUALLY SEPARATED DATA POINTS
+C  IN/OUT  --  Y(R,P)        IMAGINARY VALUES AT P EQUALLY SEPARATED DATA POINTS
+C  INPUT   --  DIM(5)        ARRAY DIMENSIONING CONSTANTS
+C-----------------------------------------------------------------------------
+C  CALLS   --  ***
+C------------------------------------------------------------------------------
+C  NOTE  --   DIMENSIONING REVISED AND SIN COS RECALC A.D. MCLACHLAN AUGUST 1981
+C  NOTE  --   THE LARGEST PRIME ALLOWED IS 2*MPPMAX+1 (HERE 19)
+C------------------------------------------------------------------------------
+      LSEPU=DIM(1)
+      LSEPV=DIM(2)
+      LSEPW=DIM(3)
+      LGLIMV=DIM(4)
+      LGLIMW=DIM(5)
+      NS = N*LSEPU
+      M OVER 2=M/2+1
+      MP=M*P
+      DBFMP=DFLOAT(MP)
+      MMP = LSEPU*MP
+      PP=P/2
+      PM=P-1
+      DBFP=DFLOAT(P)
+      DBANGL=DBPI2/DBFP
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      DO 100 U=1,PP
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      JJ=P-U
+      A(U)=DBC1
+      B(U)=DBS1
+      A(JJ)=A(U)
+      B(JJ)=-B(U)
+  100 CONTINUE
+      DO 300 U=1,PP
+      DO 200 V=1,PP
+      JJ=U*V-U*V/P*P
+      AA(V,U)=A(JJ)
+      BB(V,U)=B(JJ)
+  200 CONTINUE
+  300 CONTINUE
+C--
+      DBANGL=DBPI2/DBFMP
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      DO 1500 J=1,M OVER 2
+      FOLD=J.GT.1 .AND. 2*J.LT.M+2
+      K0 = (J-1)*LSEPU + 1
+      ZERO= J.EQ.1
+      IF (ZERO) GO TO 700
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      C(1)=DBC1
+      S(1)=DBS1
+      DO 400 U=2,PM
+      C(U)=C(U-1)*C(1)-S(U-1)*S(1)
+      S(U)=S(U-1)*C(1)+C(U-1)*S(1)
+  400 CONTINUE
+      GO TO 700
+  500 CONTINUE
+      FOLD=.FALSE.
+      K0 = (M+1-J)*LSEPU + 1
+      DO 600 U=1,PM
+      T=C(U)*A(U)+S(U)*B(U)
+      S(U)=-S(U)*A(U)+C(U)*B(U)
+      C(U)=T
+  600 CONTINUE
+  700 CONTINUE
+C--
+      DO 1400 KK = K0, NS, MMP
+      LINDU=KK-LSEPV-LSEPW
+      DO 1340 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 1320 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      XT=X(K,1)
+      YT=Y(K,1)
+      RS=X(K,2)+X(K,P)
+      IS=Y(K,2)+Y(K,P)
+      RU=X(K,2)-X(K,P)
+      IU=Y(K,2)-Y(K,P)
+      DO 800 U=1,PP
+      RA(U)=XT+RS*AA(U,1)
+      IA(U)=YT+IS*AA(U,1)
+      RB(U)=RU*BB(U,1)
+      IB(U)=IU*BB(U,1)
+  800 CONTINUE
+      XT=XT+RS
+      YT=YT+IS
+      DO 1000 U=2,PP
+      JJ=P-U
+      RS=X(K,U+1)+X(K,JJ+1)
+      IS=Y(K,U+1)+Y(K,JJ+1)
+      RU=X(K,U+1)-X(K,JJ+1)
+      IU=Y(K,U+1)-Y(K,JJ+1)
+      XT=XT+RS
+      YT=YT+IS
+      DO 900 V=1,PP
+      RA(V)=RA(V)+RS*AA(V,U)
+      IA(V)=IA(V)+IS*AA(V,U)
+      RB(V)=RB(V)+RU*BB(V,U)
+      IB(V)=IB(V)+IU*BB(V,U)
+  900 CONTINUE
+ 1000 CONTINUE
+      X(K,1)=XT
+      Y(K,1)=YT
+      DO 1300 U=1,PP
+      JJ=P-U
+      IF (ZERO) GO TO 1100
+      XT=RA(U)+IB(U)
+      YT=IA(U)-RB(U)
+      X(K,U+1)=XT*C(U)+YT*S(U)
+      Y(K,U+1)=YT*C(U)-XT*S(U)
+      XT=RA(U)-IB(U)
+      YT=IA(U)+RB(U)
+      X(K,JJ+1)=XT*C(JJ)+YT*S(JJ)
+      Y(K,JJ+1)=YT*C(JJ)-XT*S(JJ)
+      GO TO 1200
+ 1100 CONTINUE
+      X(K,U+1)=RA(U)+IB(U)
+      Y(K,U+1)=IA(U)-RB(U)
+      X(K,JJ+1)=RA(U)-IB(U)
+      Y(K,JJ+1)=IA(U)+RB(U)
+ 1200 CONTINUE
+ 1300 CONTINUE
+ 1320 CONTINUE
+ 1340 CONTINUE
+ 1400 CONTINUE
+      IF (FOLD) GO TO 500
+ 1500 CONTINUE
+C
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=RSYMFT
+C******************************************************************************
+      INTEGER FUNCTION RSYMFT(X,N,IDIM)
+C------------------------------------------------------------------------------
+C     REAL*4 SYMMETRIC MULTIDIMENSIONAL FOURIER TRANSFORM
+C     UPDATED A.D. MCLACHLAN 26 AUG 1987
+C     UPDATED MIKE PIQUE 3 NOV 1996 - Return error value instead of doing I/O
+C------------------------------------------------------------------------------
+      REAL*4 X(*)
+      INTEGER N
+      INTEGER IDIM(10)
+C-----  External function declarations
+      INTEGER GRIDIM, HERMFT
+C-----
+      INTEGER DIM(5)
+      LOGICAL ERROR
+      INTEGER ERRCOD
+      REAL*4 A, B, C, D, CO, SI
+      EQUIVALENCE (LSEPU,DIM(1)),(LSEPV,DIM(2)),(LSEPW,DIM(3))
+      EQUIVALENCE (LGLIMV,DIM(4)),(LGLIMW,DIM(5))
+      INTEGER LSEPU,LSEPV,LSEPW,LGLIMV,LGLIMW
+      INTEGER LINDU,LINDV,LDXV,LDXW
+      INTEGER I, J0, J1, K, K0,  L, NN
+      INTEGER N OVER 2, N OVER 4
+      INTEGER II, I0, J, M, MJ, MK, ML, MM, TWOD2
+      INTEGER FORWARD
+      DOUBLE PRECISION DBPI2,DBCOS1,DBSIN1,DBC1,DBS1,DBCC
+      DOUBLE PRECISION DBANGL,DBTWON
+      DATA DBPI2/6.28318530717958623D0/
+C
+C%%   DBPI2=8.0D0*DATAN2(1.0D0,1.0D0)
+C-----------------------------------------------------------------------
+C  IN/OUT  --  X(*)           REAL*4 DATA/TRANSFORM
+C  INPUT   --  N              LENGTH OF TRANSFORM AXIS
+C  INPUT   --  IDIM(10)       DIMENSIONING CONSTANTS FOR 1,2 OR 3-D ARRAY
+C  INPUT   --  NWRITE         PRINT UNIT
+C-----------------------------------------------------------------------
+C  CALLS   --  GRIDIM         CALCULATE DIMENSIONING CONSTANTS
+C  CALLS   --  HERMFT         HERMITIAN FOURIER TRANSFORM
+C-----------------------------------------------------------------------
+C  NOTE  --  INDEXING -- THE ARRANGEMENT OF THE MULTI-DIMENSIONAL DATA IS
+C  NOTE  --  SPECIFIED BY THE INTEGER ARRAY D, THE VALUES OF WHICH ARE USED AS
+C  NOTE  --  CONTROL PARAMETERS IN DO LOOPS.  WHEN IT IS DESIRED TO COVER ALL
+C  NOTE  --  ELEMENTS OF THE DATA FOR WHICH THE SUBSCRIPT BEING TRANSFORMED HAS
+C  NOTE  --  THE VALUE I0, THE FOLLOWING IS USED.
+C  NOTE  --
+C  NOTE  --            I1 = (I0 - 1)*LSEPU + 1
+C  NOTE  --            LINDU=I1-LSEPV-LSEPW
+C  NOTE  --            DO 100 LDXV=LSEPV,LGLIMV,LSEPV
+C  NOTE  --            LINDV=LINDU+LDXV
+C  NOTE  --            DO 100 LDXW=LSEPW,LGLIMW,LSEPW
+C  NOTE  --            I=LINDV+LDXW
+C  NOTE  --            . . .
+C  NOTE  --            . . .
+C  NOTE  --        100 CONTINUE
+C  NOTE  --  HERE LSEPU=D(1) IS SEPARATION BETWEEN ADJACENT ELEMENTS OF X
+C  NOTE  --  (OR OF Y) ALONG THE INDEX IU WHICH IS BEING TRANSFORMED.
+C  NOTE  --  LSEPV=D(2) AND LSEPW=D(3) ARE SEPARATION OF ADJACENT ELEMENTS
+C  NOTE  --  ALONG THE SECOND AND THIRD DIRECTIONS INDEXED BY IV,IW.
+C  NOTE  --  LGLIMV=D(4)=LSEPV*LGRIDV AND LGLIMW=D(5)=LSEPW*LGRIDW WITH
+C  NOTE  --  LGRIDV, LGRIDW BEING THE NUMBER OF GRID POINTS IN THE X (OR Y)
+C  NOTE  --  ARRAYS ALONG THE IV AND IW AXES
+C  NOTE  --  WITH THIS INDEXING IT IS POSSIBLE TO USE A NUMBER OF ARRANGEMENTS
+C  NOTE  --  OF THE DATA, INCLUDING NORMAL FORTRAN COMPLEX NUMBERS
+C  NOTE  --  (LSEPU=D(1) = 2)
+C  NOTE  --  THE SUBROUTINE GRIDIM CALCULATES THE ELEMENTS OF D ARRAY FROM THE
+C  NOTE  --  IDIM ARRAY, WHERE
+C  NOTE  --    IDIM(1)=IU               AXIS ALONG WHICH TRANSFORM IS DONE
+C  NOTE  --    IDIM(2)=IV               2ND AXIS NORMAL TO IU
+C  NOTE  --    IDIM(3)=IW               3RD AXIS NORMAL TO IU AND IV
+C  NOTE  --    IDIM(4)=NDIMX            ARRAY DIMENSION OF X(OR Y) ALONG A AXIS
+C  NOTE  --    IDIM(5)=NDIMY            ARRAY DIMENSION ALONG B AXIS
+C  NOTE  --    IDIM(6)=NDIMZ            ARRAY DIMENSION ALONG C AXIS
+C  NOTE  --    IDIM(7)=NGRIDX           NUMBER OF GRID POINTS USED ALONG A AXIS
+C  NOTE  --    IDIM(8)=NGRIDY           NUMBER OF GRID POINTS USED ALONG B AXIS
+C  NOTE  --    IDIM(9)=NGRIDZ           NUMBER OF GRID POINTS USED ALONG C AXIS
+C  NOTE  --    IDIM(10)=ICMPLX          VALUE 1 FOR SEPARATE X,Y ARRAYS,2 FOR
+C  NOTE  --                             INTERLEAVED ARRAYS(X,I*Y)
+C  NOTE  --  NOTE THAT IU,IV,IW MUST BE A PERMUTATION OF 1,2,3 AND EACH
+C  NOTE  --  NGRID.LE.NDIM.
+C  NOTE  --  ALSO NGRID FOR AXIS IU IS SAME AS N, LENGTH OF TRANSFORM.
+C  NOTE  --  THIS ALLOWS TRANSFORM TO BE DONE FOR ARRAYS EMBEDDED IN PART OF A
+C  NOTE  --  LARGER ARRAY AND CHOICE OF AXES IN ANY ORDER
+C-------------------------------------------------------------------------------
+C  NOTE  --  INDEXING REVISED AND SIN COS RECALCULATED A.D.MCLACHLAN SEP 1981
+C  NOTE  --
+C  NOTE  --  N MUST BE A MULTIPLE OF 4.  THE TWO UNIQUE ELEMENTS ARE STORED AT
+C  NOTE  --  X(1) AND X(N+1).
+C  NOTE  --
+C  NOTE  --  DECIMATION IN FREQUENCY APPLIED TO A REAL*4 SYMMETRIC SEQUENCE OF
+C  NOTE  --  LENGTH 2N GIVES A REAL*4 SYMMETRIC SEQUENCE OF LENGTH N, THE
+C  NOTE  --  TRANSFORM OF WHICH GIVES THE EVEN NUMBERED FOURIER COEFFICIENTS,
+C  NOTE  --  AND A HERMITIAN SYMMETRIC SEQUENCE OF LENGTH N, THE TRANSFORM OF
+C  NOTE  --  WHICH GIVES THE ODD NUMBERED FOURIER COEFFICIENTS.  THE SUM OF
+C  NOTE  --  THE TWO SEQUENCES IS A HERMITIAN SYMMETRIC SEQUENCE OF LENGTH N,
+C  NOTE  --  WHICH MAY BE STORED IN N/2 COMPLEX LOCATIONS.  THE TRANSFORM OF
+C  NOTE  --  THIS SEQUENCE IS N REAL*4 NUMBERS REPRESENTING THE TERM BY TERM SUM
+C  NOTE  --  OF THE EVEN AND ODD NUMBERED FOURIER COEFFICIENTS.  THIS SYMMETRIC
+C  NOTE  --  SEQUENCE MAY BE SOLVED IF ANY OF THE FOURIER COEFFICIENTS ARE
+C  NOTE  --  KNOWN.  FOR THIS PURPOSE X0, WHICH IS SIMPLY THE SUM OF THE
+C  NOTE  --  ORIGINAL SEQUENCE, IS COMPUTED AND SAVED IN X(N+1).
+C-----------------------------------------------------------------------------------
+      FORWARD=1
+      IF (N .EQ. 1) GO TO 1300
+      N OVER 2 = N/2
+      N OVER 4 = N/4
+      IF (4*N OVER 4 .NE. N) GO TO 1400
+      ERROR=.FALSE.
+      ERRCOD = GRIDIM(N,IDIM,ERROR,LSEPU,LSEPV,LSEPW,
+     1    LGLIMV,LGLIMW)
+      IF(ERROR .OR. ERRCOD.NE.0) GO TO 1600
+      DBTWON=DFLOAT(2*N)
+      TWOD2 = 2*LSEPU
+C--
+      K0 = N*LSEPU + 1
+      LINDU=K0-LSEPV-LSEPW
+      DO 100 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 100 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      X(K) = X(K)/2.0
+  100 CONTINUE
+C--
+      DBANGL=DBPI2/DBTWON
+      DBCOS1=DCOS(DBANGL)
+      DBSIN1=DSIN(DBANGL)
+      DBC1=1.0D0
+      DBS1=0.0D0
+      DO 300 I = 2, N OVER 2
+      DBCC=DBC1
+      DBC1=DBC1*DBCOS1-DBS1*DBSIN1
+      DBS1=DBS1*DBCOS1+DBCC*DBSIN1
+      CO=DBC1
+      SI=DBS1
+      K0 = (I - 1)*LSEPU + 1
+      J0 = (N + 2 - 2*I)*LSEPU
+      J1 = (N + 1 - I)*LSEPU
+      LINDU=K0-LSEPV-LSEPW
+      DO 200 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 200 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      L = K + J0
+      NN = K + J1
+      A = X(L) + X(K)
+      B = X(L) - X(K)
+      X(K) = A - B*CO
+      X(L) = B*SI
+      X(NN) = X(NN) + A
+  200 CONTINUE
+  300 CONTINUE
+C--
+      IF (N OVER 4 .EQ. 1) GO TO 600
+      J0 = N OVER 4 - 1
+      DO 500 I = 1, J0
+      K0 = (N OVER 2 + I)*LSEPU + 1
+      J1 = (N OVER 2 - 2*I)*LSEPU
+      LINDU=K0-LSEPV-LSEPW
+      DO 400 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 400 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      L = K + J1
+      A = X(K)
+      X(K) = X(L)
+      X(L) = A
+  400 CONTINUE
+  500 CONTINUE
+C--
+  600 CONTINUE
+      J0 = N OVER 2*LSEPU
+      J1 = N*LSEPU
+      LINDU=1-LSEPV-LSEPW
+      DO 700 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 700 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      I = K + J0
+      L = K + J1
+      X(I) = 2.0*X(I)
+      X(L) = X(K) + X(I) + 2.0*X(L)
+      X(K) = 2.0*X(K)
+  700 CONTINUE
+C--
+      K = NOVER2*LSEPU + 1
+C----------------------------------------------
+      ERRCOD = HERMFT(X(1),X(K),NOVER2,IDIM,FORWARD)
+      IF (ERRCOD .NE. 0) THEN
+	 RSYMFT = ERRCOD
+	 RETURN
+	 ENDIF
+C----------------------------------------------
+C--   SOLVE THE EQUATIONS FOR ALL OF THE SEQUENCES
+C--
+      I0 = 1 - LSEPU
+      MK = N OVER 2*LSEPU
+      MJ = MK + LSEPU
+      ML = N*LSEPU + LSEPU
+      MM = ML
+      DO 800 II = 1, N OVER 4
+      I0 = I0 + LSEPU
+      MJ = MJ - TWOD2
+      ML = ML - TWOD2
+      MM = MM - LSEPU
+      LINDU=I0-LSEPV-LSEPW
+      DO 800 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 800 LDXW=LSEPW,LGLIMW,LSEPW
+      I=LINDV+LDXW
+      J = I + MJ
+      K = I + MK
+      L = I + ML
+      M = I + MM
+      A = X(I) - X(M)
+      B = X(L) - A
+      C = X(K) - B
+      D = X(J) - C
+      X(I) = X(M)
+      X(J) = A
+      X(K) = B
+      X(L) = C
+      X(M) = D
+  800 CONTINUE
+C------------------------------------------------------------------------
+C     THE RESULTS ARE NOW IN A SCRAMBLED DIGIT REVERSED ORDER, I.E.
+C     X(1), X(5), X(9), ..., X(10), X(6), X(2), ..., X(3), X(7), X(11),
+C     ..., X(12), X(8), X(4).  THE FOLLOWING SECTION OF PROGRAM FOLLOWS
+C     THE PERMUTATION CYCLES AND DOES THE NECESSARY INTERCHANGES.
+C------------------------------------------------------------------------
+      IF (N OVER 4 .EQ. 1) GO TO 1300
+      NN = N - 2
+      DO 1200 I = 1, NN
+      K = I
+C--
+ 1000 CONTINUE
+      K0 = K/4
+      L = K - K0*4
+      IF (L .NE. (L/2)*2) K0 = N OVER 4 - 1 - K0
+      K = K0 + L*N OVER 4
+      IF (K .LT. I) GO TO 1000
+      IF (K .EQ. I) GO TO 1200
+C--
+      K0 = I*LSEPU + 1
+      J0 = (K - I)*LSEPU
+      LINDU=K0-LSEPV-LSEPW
+      DO 1100 LDXV=LSEPV,LGLIMV,LSEPV
+      LINDV=LINDU+LDXV
+      DO 1100 LDXW=LSEPW,LGLIMW,LSEPW
+      K=LINDV+LDXW
+      L = K + J0
+      A = X(K)
+      X(K) = X(L)
+      X(L) = A
+ 1100 CONTINUE
+ 1200 CONTINUE
+C--
+ 1300 CONTINUE
+      RSYMFT = 0
+      RETURN
+C
+ 1400 CONTINUE
+C     WRITE(NWRITE,1500) N
+C1500 FORMAT(1X,' **RSYMFT** ERROR: N NOT A MULTIPLE OF 4.  N =',I10)
+      RSYMFT = 502
+      RETURN
+C--
+C--
+ 1600 CONTINUE
+C     WRITE(NWRITE,1700) N,IDIM
+C1700 FORMAT(1X,'**RSYMFT** ERROR IN DIMENSIONS OF ARRAYS N=,IDIM=',
+C    1  I5,5X,3I5,1X,3I5,1X,3I5,1X,I5)
+      RSYMFT = 501
+      RETURN
+      END
+C   FFTSUBS_NOBIX   NAME=SRFP
+C***************************************************************************
+      INTEGER FUNCTION  SRFP(NPTS,NPMAX,NPORD,N2GRP,NFACTR,NSYM,
+     1    NPSYM,NUNSYM,NPRLST)
+C---------------------------------------------------------------------------
+C     SYMMETRIZED REORDERING FACTORING PROGRAMME
+C     UPDATED A.D. MCLACHLAN 27 AUG 1987
+C     UPDATED MIKE PIQUE 3 NOV 1996 - Return error value instead of doing I/O
+C---------------------------------------------------------------------------
+      PARAMETER(MPMAX=32,MPMAX1=MPMAX+1,MPORD=8)
+      INTEGER NPTS,NPMAX,N2GRP,NPSYM
+      INTEGER NFACTR(MPMAX1), NSYM(MPMAX1), NUNSYM(MPMAX1)
+      INTEGER NPRLST(MPORD)
+C-----
+      INTEGER NPP(MPMAX1), NQQ(MPMAX1)
+      INTEGER NF,J,JJ,N,NFCMAX,NP,NPOW2,NQ,NR
+C---------------------------------------------------------------------------
+C  INPUT   --  NPTS           NUMBER OF POINTS
+C  INPUT   --  NPMAX          LARGEST ALLOWED FACTOR
+C  INPUT   --  NPORD          NUMBER OF PRIMES USED
+C  INPUT   --  N2GRP          HIGHEST VALUE OF 2**N TREATED AS A SINGLE
+C  INPUT   --                 SPECIAL FACTOR
+C  OUTPUT  --  NFACTR(MPMAX1) DOUBLE LIST OF FACTORS
+C  OUTPUT  --  NSYM(MPMAX1)   LIST OF PAIRED FACTORS TWICE (DOWN THEN UP)
+C  OUTPUT  --  NPSYM          PRODUCT OF PAIRED FACTORS ONCE EACH
+C  OUTPUT  --  NUNSYM(MPMAX1) LIST OF SINGLE FACTORS, SMALLEST FIRST
+C  INPUT   --  NPRLST(MPORD)  LIST OF FIRST NPORD PRIMES /2,3,5,7,.../
+C  RETURNS --  ERROR CODE (ZERO is OK):
+C     ERROR 1001: FACTOR TOO LARGE
+C     ERROR 1002: TOO MANY FACTORS
+C  INPUT   --  NWRITE         PRINT CONTROL
+C---------------------------------------------------------------------------
+C  NOTE  --  UP TO 32 FACTORS DEC 1984 A.D. MCLACHLAN. UPDATED 17 DEC 1984.
+C---------------------------------------------------------------------------
+C  NOTE  --   THE PARAMETER MPMAX (HERE 32) SPECIFIES THE LARGEST NUMBER OF
+C  NOTE  --   FACTORS (POWERS OF 2 ARE CLUSTERED AS 4 AND 8)
+C  NOTE  --   THERE ARE NP PAIRED FACTORS, NQ SINGLE FACTORS
+C  NOTE  --   NQQ HAS DIMENSION MPMAX1 (UP TO NPORD+1 USED)
+C  NOTE  --   NPP HAS DIMENSION MPMAX1 (UP TO MPMAX1 USED)
+C--------------------------------------------------------------------------
+C--------------------------------------------------------------------------
+      NFCMAX=MPMAX
+      N=NPTS
+      NPSYM=1
+      IPMIN=1
+      NP=0
+      NQ=0
+  100 CONTINUE
+C   --DIVIDE BY POSSIBLE PRIME FACTORS IN TURN
+      IF (N.LE.1) GO TO 500
+      DO 200 IP=IPMIN,NPORD
+         J=NPRLST(IP)
+         IF (N.EQ.(N/J)*J) GO TO 300
+  200    CONTINUE
+C   --ERROR: FACTOR TOO LARGE
+C     WRITE (NWRITE,20) NPMAX,NPTS
+C  20 FORMAT (1X,'***SRFP*** ERROR:'
+C    1        ' LARGEST FACTOR EXCEEDS ',I3,'   N = ',I6)
+      SRFP = 1001
+      RETURN
+
+  300 CONTINUE
+C   --CHECK FOR TOO MANY FACTORS
+      IF ((2*NP+NQ).GE.NFCMAX) THEN
+C        --ERROR: TOO MANY FACTORS
+C          WRITE (NWRITE,21) NFCMAX,NPTS
+C  21      FORMAT (1X,'***SRFP*** ERROR:'
+C    1        ' FACTOR COUNT EXCEEDS ',I3,'  N = ',I6)
+           SRFP = 1002
+           RETURN
+	   ENDIF
+      IPMIN=IP
+      NF=J
+      N=N/NF
+C   --CHECK IF STILL DIVISIBLE BY NF
+      IF (N.EQ.(N/NF)*NF) GO TO 400
+C   --NOW NF IS A SINGLE FACTOR OF NPTS (UP TO NPORD DIFERENT ONES MAY EXIST)
+      NQ=NQ+1
+      NQQ(NQ)=NF
+      GO TO 100
+  400 CONTINUE
+C   --NOW NF IS A PAIRED FACTOR
+C   --DIVIDE BY NF A SECOND TIME TO COLLECT PAIRS OF FACTORS
+C   --NPSYM IS THE PRODUCT OF ALL THE PAIRED FACTORS, ONCE EACH
+      N=N/NF
+      NP=NP+1
+      NPP(NP)=NF
+      NPSYM=NPSYM*NF
+      GO TO 100
+C-------------------
+  500 CONTINUE
+C   --RESERVE SPACE FOR A MIDDLE VALUE IN NSYM ARRAY
+      NR=1
+      IF (NQ.EQ.0) NR=0
+      IF (NP.LT.1) GO TO 700
+C   --INDEX ALL THE DOUBLE FACTORS
+C   --NSYM(J) LISTS LARGEST FIRST (1...NP)
+C   --NFACTR(J) LISTS LARGEST FIRST (1...NP)
+C   --NFACTR(NP+NQ+J) LISTS AGAIN SMALLEST FIRST
+C   --NSYM(NP+NR+J) LISTS AGAIN SMALLEST FIRST
+      DO 600 J=1,NP
+      JJ=NP+1-J
+      NSYM(J)=NPP(JJ)
+      NFACTR(J)=NPP(JJ)
+      JJ=NP+NQ+J
+      NFACTR(JJ)=NPP(J)
+      JJ=NP+NR+J
+      NSYM(JJ)=NPP(J)
+  600 CONTINUE
+  700 CONTINUE
+      IF (NQ.LT.1) GO TO 900
+C   --INDEX ALL THE SINGLE FACTORS (1...NQ) IN THE MIDDLE SECTION OF NFACTR
+C   --NUNSYM LISTS SMALLEST FIRST
+C   --NSYM(NP+1) IS PRODUCT OF ALL SINGLE FACTORS (IF ANY)
+      DO 800 J=1,NQ
+      JJ=NP+J
+      NUNSYM(J)=NQQ(J)
+      NFACTR(JJ)=NQQ(J)
+  800 CONTINUE
+      NSYM(NP+1)=NPTS/(NPSYM**2)
+  900 CONTINUE
+C   --NFACS IS TOTAL NUMBER OF FACTORS
+      NFACS=2*NP+NQ
+      NFACTR(NFACS+1)=0
+      NPOW2=1
+      J=0
+C   --GO THROUGH FACTORS COLLECTING CONSECUTIVE POWERS OF 2 IN CLUSTERS UP
+C   --TO N2GRP
+ 1000 CONTINUE
+      J=J+1
+C   --TEST FOR LAST FACTOR
+      IF (NFACTR(J).EQ.0) GO TO 1200
+C   --SEARCH FOR FACTOR OF 2
+      IF (NFACTR(J).NE.2) GO TO 1000
+C   --2 FOUND
+      NPOW2=NPOW2*2
+C   --REDUCE CURRENT FACTOR TO 1
+      NFACTR(J)=1
+C   --IS CLUSTER FULL?
+      IF (NPOW2.GE.N2GRP) GO TO 1100
+C   --GO BACK FOR MORE
+      IF (NFACTR(J+1).EQ.2) GO TO 1000
+C   --SAVE CURRENT CLUSTER
+ 1100 CONTINUE
+      NFACTR(J)=NPOW2
+      NPOW2=1
+      GO TO 1000
+C-----
+ 1200 CONTINUE
+C   --IF ONLY ONE SINGLE FACTOR ERASE IT FROM NUNSYM LIST
+      IF (NP.EQ.0) NR=0
+      JJ=2*NP+NR
+      NSYM(JJ+1)=0
+      IF (NQ.LE.1) NQ=0
+      NUNSYM(NQ+1)=0
+      SRFP = 0
+      RETURN
+      END

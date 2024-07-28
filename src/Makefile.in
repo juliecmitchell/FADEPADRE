@@ -1,0 +1,86 @@
+###############################################################################
+# Platform-dependent parameters
+CC	=
+CPP	=
+F77	=
+MPIC	=
+MPIF	=
+CFLAGS	=
+FFLAGS	=
+LDFLAGS	=
+LIBS	=
+SYS	=
+SPECIAL	=
+RANLIB	=
+SHELL	=
+###############################################################################
+
+TARGETS	=	PADRE FADE zeroT pdbshift getchain
+PROGRAM =       PADRE FADE 
+UTILITY =       zeroT pdbshift getchain
+HS	=	ffttypes.h fade.h fadecount.h fadein.h fadeout.h fadedens.h fadeut.h fftwrap.h	
+
+OBJS 	=	fade.o fadecount.o fadein.o fadeout.o fadedens.o fadeut.o fftwrap.o fft.o alloc.o
+ZOBJS 	=	zeroT.o  
+POBJS 	=	pdbshift.o rots.o
+GOBJS 	=	getchain.o  
+PDOBJS	=	padre.o
+
+MYINC	=	-I/usr/local/include 
+# MYLIB1	=	-L/usr/local/lib 
+MYLIB1  =	-L.
+
+#: Default rule
+default: $(PROGRAM) $(UTILITY)
+
+
+# Rules to link object files into executables
+
+PADRE: $(PDOBJS) $(HS)
+	$(CC) -o $@ $(PDOBJS) $(LDFLAGS) $(MYLIB1) $(LIBS)
+
+FADE: $(OBJS) $(HS)
+	$(CC) -o $@ $(OBJS) $(LDFLAGS) $(MYLIB1) $(LIBS)
+
+zeroT: $(ZOBJS) $(HS)
+	$(CC) -o $@ $(ZOBJS) $(LDFLAGS) $(MYLIB1) $(LIBS)
+
+pdbshift: $(POBJS) $(HS)
+	$(CC) -o $@ $(POBJS) $(LDFLAGS) $(MYLIB1) $(LIBS)
+
+getchain: $(GOBJS) $(HS)
+	$(CC) -o $@ $(GOBJS) $(LDFLAGS) $(MYLIB1) $(LIBS)
+
+# Rule to build object file.o from file.c
+.c.o:
+	$(CC) -c $(CFLAGS) $(MYINC) $<
+
+# Rule to build object file.o from file.C
+.C.o:
+	$(CPP) -c -g $(FFLAGS) $(MYINC) $<
+
+# Rule to build object file.o from file.f
+.f.o:
+	$(F77) -c -g $(FFLAGS) $<
+
+install: $(TARGETS)
+	for executable in $(UTILITY); do \
+		/bin/cp $${executable} ../bin/utils/exec/$${executable}.$(SYS)$(SPECIAL); \
+		chmod 755 ../bin/utils/exec/$${executable}.$(SYS)$(SPECIAL); \
+	done
+	for executable in $(PROGRAM); do \
+		/bin/cp $${executable} ../bin/exec/$${executable}.$(SYS)$(SPECIAL); \
+		chmod 755 ../bin/exec/$${executable}.$(SYS)$(SPECIAL); \
+	done
+
+clean:
+	/bin/rm -f *.o *~
+	/bin/rm -f $(PROGRAM) $(UTILITY)  core Makefile Makefile.OLD cfg_*
+
+realclean: clean
+	for executable in $(UTILITY); do \
+                /bin/rm -f ../bin/utils/exec/$${executable}.$(SYS)$(SPECIAL); \
+	done
+	for executable in $(PROGRAM); do \
+		/bin/rm -f ../bin/exec/$${executable}.$(SYS)$(SPECIAL); \
+	done

@@ -1,0 +1,55 @@
+#!/bin/sh
+
+# This script is used by the compiling scripts (configure, Makefile)
+# to determine which executables to use.
+
+#
+# Echo the name of this architecture
+#
+# Usage: ./architecture
+#
+# On ULTRIX use: sh5 ./architecture
+#
+
+# Find out what kind of system this is
+UNAME="`uname -a`"
+
+case "$UNAME" in
+Darwin*)
+        # Macintosh Power PC running OS X  
+        SYS="Darwin"
+        ;;
+Linux*)
+	# PC running Linux
+	SYS="Linux"
+	;;
+SunOS*)
+	# Sun running SunOS 5 Solaris
+	SYS="SunOS"
+	;;
+IRIX64*)
+        # SGI running IRIX64
+        SYS="IRIX64"
+        ;;
+IRIX*)
+	# SGI running IRIX
+	SYS="IRIX"
+	;;
+OSF1*)
+	# DEC Alpha running Digital UNIX (OSF1)
+	SYS="OSF1"
+	;;
+*CRAY\ T3E)
+	# CRAY T3E running UNICOS/mk
+	SYS="t3e"
+	;;
+AIX*)
+	# IBM RS/6000 running AIX (SP2)
+	SYS="aix"
+	;;
+*)	# Unknown system
+	SYS="unknown"
+esac
+
+echo $SYS
+

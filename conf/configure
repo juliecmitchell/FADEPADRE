@@ -1,0 +1,252 @@
+#!/bin/sh
+
+# Configures the Makefiles for compilation on this system.
+# Used only by those who wish to compile from source code.
+
+#
+# Configure the Makefile
+#
+# Usage: ./configure
+#
+# Usage: ./configure -checkconfig
+#
+# Usage: ./configure -parallel -checkconfig
+#
+# Reads Makefile.in and writes Makefile
+# Deletes ./*.o to force full recompile for a new configuration!!!
+#
+# On ULTRIX execute with sh5
+#
+
+# Find out what kind of system this is
+UNAME="`uname -a`"
+
+if [ ! -f ./Makefile.in ]
+then
+	echo "Cannot find file Makefile.in, is source installed correctly?"
+	exit 1
+fi
+
+if [ ! -w ./ ]
+then
+	echo "Cannot write files in this directory, quitting"
+	exit 1
+fi
+
+if [ -x ../conf/architecture ]; then
+	SYS="`../conf/architecture`"
+else
+	echo "Cannot find script ../conf/architecture, quitting"
+	exit 1
+fi
+
+# SPECIAL is used to determine special requirements, such as
+SPECIAL=""
+# OSF1 + SMP with DIGITAL MPI
+if [ "$SYS" = alpha -a -x /usr/bin/dmpirun ]; then
+	SPECIAL=""
+fi
+
+if [ "$1" = -parallel ]; then
+	PARALLEL="-DPARALLEL"
+	shift
+fi
+
+# if you're using lam
+MPICC="hcc"
+MPICPP="hcp"
+MPIF="hf77"
+
+MPI_INC=""
+MPI_LIB=""
+PARALLEL_CFLAGS=""
+PARALLEL_LFLAGS=""
+
+# determine the need for MPI
+if [ "$PARALLEL" = "-DPARALLEL" ]; then
+	PARALLEL_CFLAGS="$PARALLEL $MPI_INC"
+	PARALLEL_LFLAGS="$MPI_LIB"
+fi
+
+# Modify values for each supported architecture
+# Don't put any % characters in the strings since % is the sed delimiter below
+case "$SYS$SPECIAL" in
+SunOS)
+	# Sun running SunOS 5 Solaris
+	CC="gcc"
+	CPP="g++"
+	F77="f77"
+	CFLAGS="-O2 $PARALLEL_CFLAGS"
+	FFLAGS="-O2"
+	LDFLAGS="-s $PARALLEL_LFLAGS"
+	LIBS="-lm -lsocket -lnsl"
+	RANLIB="ranlib"
+	SHELL="/bin/sh"
+	;;
+IRIX64)
+        # SGI running IRIX
+        CC="cc"
+        CPP="c++"
+        F77="f77"
+        CFLAGS="-O2 $PARALLEL_CFLAGS"
+        FFLAGS="-O2"
+        LDFLAGS="-s $PARALLEL_LFLAGS"
+        LIBS="-lm"
+        RANLIB="/bin/true"
+        SHELL="/bin/sh"
+        ;;
+IRIX)
+	# SGI running IRIX 
+	CC="cc"
+	CPP="c++"
+	F77="f77"
+	CFLAGS="-O2 $PARALLEL_CFLAGS"
+	FFLAGS="-O2"
+	LDFLAGS="-s $PARALLEL_LFLAGS"
+	LIBS="-lm"
+	RANLIB="/bin/true"
+	SHELL="/bin/sh"
+	;;
+OSF1)
+	# DEC Alpha running Digital UNIX (OSF1)
+	CC="cc"
+	CPP="c++"
+	F77="f77"
+	CFLAGS="-O2 $PARALLEL_CFLAGS"
+	FFLAGS="-O2"
+	LDFLAGS="-s $PARALLEL_LFLAGS"
+	LIBS="-lm"
+	RANLIB="ranlib"
+	SHELL="/bin/sh"
+	;;
+*.SMP)
+	# DEC Alpha SMP running Digital UNIX (OSF1) with DIGITAL MPI
+	CC="cc"
+	CPP="c++"
+	F77="f77"
+	CFLAGS="-O2 $PARALLEL_CFLAGS"
+	FFLAGS="-O2"
+	LDFLAGS="-s $PARALLEL_LFLAGS"
+	LIBS="-lm"
+	SPECIAL=".SMP"
+	RANLIB="ranlib"
+	SHELL="/bin/sh"
+	;;
+ULTRIX)
+	# DEC MIPS running ULTRIX (untested)
+	CC="cc"
+	CPP="c++"
+	F77="f77"
+	CFLAGS="-O2 $PARALLEL_CFLAGS"
+	FFLAGS="-O2"
+	LDFLAGS="-s $PARALLEL_LFLAGS"
+	LIBS="-lm"
+	RANLIB="ranlib"
+	SHELL="/bin/sh5"
+	;;
+Linux)
+	# Linux (Redhat 5.2)
+	CC="gcc"
+	CPP="g++"
+	F77="g77"
+	CFLAGS="$PARALLEL_CFLAGS"
+	FFLAGS=""
+	LDFLAGS="-s $PARALLEL_LFLAGS"
+	LIBS="-lm"
+	RANLIB="ranlib"
+	SHELL="/bin/sh"
+	;;
+Darwin*)
+        # Macintosh running FreeBSD 
+        CC="cc"
+        CPP="c++"
+        F77="g77"
+        CFLAGS="-O2 $PARALLEL_CFLAGS"
+        FFLAGS="-O2"
+        LDFLAGS=" $PARALLEL_LFLAGS"
+        LIBS="-lm"
+        RANLIB="/bin/true"
+        SHELL="/bin/sh"
+        ;;
+cray_t3e)
+	# CRAY T3E running UNICOS/mk
+	CC="cc"
+	CPP="c++"
+	F77="f90"
+	MPICC="cc"
+	MPICPP="c++"
+	MPIF="f90"
+	CFLAGS="-O2 $PARALLEL_CFLAGS"
+	FFLAGS="-O2 -dp"
+	LDFLAGS="-s $PARALLEL_LFLAGS"
+	LIBS="-lm"
+	RANLIB="ranlib"
+	SHELL="/bin/sh"
+	;;
+SP2)
+	# IBM SP-2 running AIX (may also work on RS/6000 workstations)
+	CC="cc"
+	CPP="c++"
+	F77="xlf"
+	MPICC="mpcc"
+	MPICPP="mpc++"
+	MPIF="mpxlf"
+	CFLAGS="-O2 $PARALLEL_CFLAGS -qmaxmem=-1"
+	FFLAGS="-O2 -qmaxmem=-1"
+	LDFLAGS="-s $PARALLEL_LFLAGS"
+	LIBS="-lm"
+	RANLIB="ranlib"
+	SHELL="/bin/sh"
+	;;
+unknown)	# Unknown system
+	# This architecture may not be supported
+cat << EOF
+
+Cannot proceed because this system may not be currently supported.
+Send the above string to mitchell@sdsc.edu for help.
+
+EOF
+	# Have to quit now
+	exit 1
+	;;
+esac
+
+# Option -checkconfig to check if configuration proper for this system
+# Used in Makefile to make sure configuration is for the right architecture
+if [ "$1" = -checkconfig ] ; then
+	if [ -f cfg_$SYS$SPECIAL -a -f Makefile ]; then
+		exit 0
+	fi
+fi
+
+if [ "$PARALLEL" = "-DPARALLEL" ]; then
+	CC="$MPICC"
+	CPP="$MPICPP"
+fi
+
+echo "Configuring for $SYS$SPECIAL"
+
+# Name new configuration and force full recompile
+/bin/rm -f cfg_*   *.o
+echo "$SYS$SPECIAL" > cfg_$SYS$SPECIAL
+
+if [ -f Makefile ] ; then
+	/bin/rm -f Makefile.OLD
+	/bin/mv -f Makefile Makefile.OLD
+fi
+
+sed \
+	-e "s%^CC	=.*%CC	= $CC%" \
+	-e "s%^CPP	=.*%CPP	= $CPP%" \
+	-e "s%^F77	=.*%F77	= $F77%" \
+	-e "s%^MPICC	=.*%MPICC	= $MPICC%" \
+	-e "s%^MPIF	=.*%MPIF	= $MPIF%" \
+	-e "s%^CFLAGS	=.*%CFLAGS	= $CFLAGS%" \
+	-e "s%^FFLAGS	=.*%FFLAGS	= $FFLAGS%" \
+	-e "s%^LDFLAGS	=.*%LDFLAGS	= $LDFLAGS%" \
+	-e "s%^LIBS	=.*%LIBS	= $LIBS%" \
+	-e "s%^SYS	=.*%SYS	= $SYS%" \
+	-e "s%^SPECIAL	=.*%SPECIAL	= $SPECIAL%" \
+	-e "s%^RANLIB	=.*%RANLIB	= $RANLIB%" \
+	-e "s%^SHELL	=.*%SHELL	= $SHELL%" \
+	< Makefile.in > Makefile
