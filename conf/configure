@@ -71,79 +71,6 @@ fi
 # Modify values for each supported architecture
 # Don't put any % characters in the strings since % is the sed delimiter below
 case "$SYS$SPECIAL" in
-SunOS)
-	# Sun running SunOS 5 Solaris
-	CC="gcc"
-	CPP="g++"
-	F77="f77"
-	CFLAGS="-O2 $PARALLEL_CFLAGS"
-	FFLAGS="-O2"
-	LDFLAGS="-s $PARALLEL_LFLAGS"
-	LIBS="-lm -lsocket -lnsl"
-	RANLIB="ranlib"
-	SHELL="/bin/sh"
-	;;
-IRIX64)
-        # SGI running IRIX
-        CC="cc"
-        CPP="c++"
-        F77="f77"
-        CFLAGS="-O2 $PARALLEL_CFLAGS"
-        FFLAGS="-O2"
-        LDFLAGS="-s $PARALLEL_LFLAGS"
-        LIBS="-lm"
-        RANLIB="/bin/true"
-        SHELL="/bin/sh"
-        ;;
-IRIX)
-	# SGI running IRIX 
-	CC="cc"
-	CPP="c++"
-	F77="f77"
-	CFLAGS="-O2 $PARALLEL_CFLAGS"
-	FFLAGS="-O2"
-	LDFLAGS="-s $PARALLEL_LFLAGS"
-	LIBS="-lm"
-	RANLIB="/bin/true"
-	SHELL="/bin/sh"
-	;;
-OSF1)
-	# DEC Alpha running Digital UNIX (OSF1)
-	CC="cc"
-	CPP="c++"
-	F77="f77"
-	CFLAGS="-O2 $PARALLEL_CFLAGS"
-	FFLAGS="-O2"
-	LDFLAGS="-s $PARALLEL_LFLAGS"
-	LIBS="-lm"
-	RANLIB="ranlib"
-	SHELL="/bin/sh"
-	;;
-*.SMP)
-	# DEC Alpha SMP running Digital UNIX (OSF1) with DIGITAL MPI
-	CC="cc"
-	CPP="c++"
-	F77="f77"
-	CFLAGS="-O2 $PARALLEL_CFLAGS"
-	FFLAGS="-O2"
-	LDFLAGS="-s $PARALLEL_LFLAGS"
-	LIBS="-lm"
-	SPECIAL=".SMP"
-	RANLIB="ranlib"
-	SHELL="/bin/sh"
-	;;
-ULTRIX)
-	# DEC MIPS running ULTRIX (untested)
-	CC="cc"
-	CPP="c++"
-	F77="f77"
-	CFLAGS="-O2 $PARALLEL_CFLAGS"
-	FFLAGS="-O2"
-	LDFLAGS="-s $PARALLEL_LFLAGS"
-	LIBS="-lm"
-	RANLIB="ranlib"
-	SHELL="/bin/sh5"
-	;;
 Linux)
 	# Linux (Redhat 5.2)
 	CC="gcc"
@@ -168,36 +95,6 @@ Darwin*)
         RANLIB="/bin/true"
         SHELL="/bin/sh"
         ;;
-cray_t3e)
-	# CRAY T3E running UNICOS/mk
-	CC="cc"
-	CPP="c++"
-	F77="f90"
-	MPICC="cc"
-	MPICPP="c++"
-	MPIF="f90"
-	CFLAGS="-O2 $PARALLEL_CFLAGS"
-	FFLAGS="-O2 -dp"
-	LDFLAGS="-s $PARALLEL_LFLAGS"
-	LIBS="-lm"
-	RANLIB="ranlib"
-	SHELL="/bin/sh"
-	;;
-SP2)
-	# IBM SP-2 running AIX (may also work on RS/6000 workstations)
-	CC="cc"
-	CPP="c++"
-	F77="xlf"
-	MPICC="mpcc"
-	MPICPP="mpc++"
-	MPIF="mpxlf"
-	CFLAGS="-O2 $PARALLEL_CFLAGS -qmaxmem=-1"
-	FFLAGS="-O2 -qmaxmem=-1"
-	LDFLAGS="-s $PARALLEL_LFLAGS"
-	LIBS="-lm"
-	RANLIB="ranlib"
-	SHELL="/bin/sh"
-	;;
 unknown)	# Unknown system
 	# This architecture may not be supported
 cat << EOF

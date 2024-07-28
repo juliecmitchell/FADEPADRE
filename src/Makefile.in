@@ -65,10 +65,12 @@ getchain: $(GOBJS) $(HS)
 
 install: $(TARGETS)
 	for executable in $(UTILITY); do \
+        mkdir -p ../bin/utils/exec; \
 		/bin/cp $${executable} ../bin/utils/exec/$${executable}.$(SYS)$(SPECIAL); \
 		chmod 755 ../bin/utils/exec/$${executable}.$(SYS)$(SPECIAL); \
 	done
 	for executable in $(PROGRAM); do \
+        mkdir -p ../bin/exec; \
 		/bin/cp $${executable} ../bin/exec/$${executable}.$(SYS)$(SPECIAL); \
 		chmod 755 ../bin/exec/$${executable}.$(SYS)$(SPECIAL); \
 	done
