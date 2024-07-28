@@ -1,8 +1,0 @@
-
-This directory contains the distribution for FADE and PADRE. We have 
-included execution scripts in the "bin/work" directory which will 
-automatically call FADE and PADRE using the appropriate system extension.
-
-This software is Copyright 2001 by the University of California
-San Diego.  The authors reserve all rights to the code.
-
